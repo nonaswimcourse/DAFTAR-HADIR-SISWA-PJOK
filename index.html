@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Presensi Peserta Didik - SD Negeri Tanjung 03</title>
+<link rel="icon" type="image/png" href="logo.png">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"
+  onerror="this.onerror=null;this.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js'"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"
+  onerror="this.onerror=null;this.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js'"></script>
+</head>
+<body>
+
+<header class="top">
+  <img src="logo.png" alt="Logo Sekolah">
+  <div class="titles">
+    <h1 id="schoolNameTitle">SD NEGERI TANJUNG 03</h1>
+    <p id="schoolSubTitle">KAB. BREBES &middot; Presensi Peserta Didik</p>
+  </div>
+</header>
+
+<nav class="tabs">
+  <button class="tab active" data-page="kelas">🏫 Kelas &amp; Siswa</button>
+  <button class="tab" data-page="presensi">✅ Presensi Harian</button>
+  <button class="tab" data-page="rekap">📊 Rekap &amp; Cetak</button>
+</nav>
+
+<main>
+
+  <!-- ===================== PAGE: KELAS & SISWA ===================== -->
+  <section id="kelas" class="page active">
+    <div class="card">
+      <h2>Tambah Kelas</h2>
+      <p class="muted">Buat data kelas terlebih dahulu (misal: Kelas 1, Kelas 2A, Kelas 6B).</p>
+      <form id="formKelas" class="row">
+        <input id="inputKelasNama" placeholder="Nama kelas, mis. Kelas 4A" required style="flex:1;min-width:180px">
+        <button class="btn primary" type="submit">+ Tambah Kelas</button>
+      </form>
+      <div class="chip-list" id="daftarKelasChip"></div>
+      <p class="small-muted" id="kelasEmptyMsg">Belum ada kelas. Tambahkan kelas dahulu.</p>
+    </div>
+
+    <div class="card">
+      <div class="row between">
+        <h2>Daftar Siswa <span id="kelasAktifLabel" style="color:var(--muted);font-weight:400;font-size:13px"></span></h2>
+      </div>
+      <p class="muted">Pilih kelas di atas terlebih dahulu, lalu tambahkan siswa satu-satu atau tempel banyak nama sekaligus.</p>
+
+      <div class="grid2">
+        <div>
+          <label class="field-label">Tambah 1 Siswa</label>
+          <form id="formSiswa" class="row">
+            <input id="inputSiswaNama" placeholder="Nama siswa" required style="flex:1">
+            <button class="btn gold" type="submit">+ Tambah</button>
+          </form>
+        </div>
+        <div>
+          <label class="field-label">Tempel Banyak Nama (1 nama / baris)</label>
+          <div class="row">
+            <textarea id="importSiswaText" rows="1" placeholder="Ahmad Fauzi&#10;Siti Aminah&#10;..." style="flex:1"></textarea>
+            <button class="btn secondary" id="importSiswaBtn" type="button">Import</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="table-wrap" style="margin-top:14px">
+        <table>
+          <thead><tr><th style="width:40px">No</th><th>Nama Siswa</th><th style="width:90px">Aksi</th></tr></thead>
+          <tbody id="daftarSiswaBody"></tbody>
+        </table>
+      </div>
+      <p class="empty" id="siswaEmptyMsg" hidden>Belum ada siswa di kelas ini.</p>
+    </div>
+  </section>
+
+  <!-- ===================== PAGE: PRESENSI HARIAN ===================== -->
+  <section id="presensi" class="page">
+    <div class="card">
+      <h2>Presensi Harian (Ceklist)</h2>
+      <p class="muted">Pilih kelas &amp; tanggal, lalu ketuk status setiap siswa. Semua siswa otomatis berstatus <b>Hadir</b> — cukup ubah yang tidak hadir.</p>
+      <div class="grid2">
+        <div>
+          <label class="field-label">Kelas</label>
+          <select id="presensiKelas"></select>
+        </div>
+        <div>
+          <label class="field-label">Tanggal</label>
+          <input type="date" id="presensiTanggal">
+        </div>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn secondary sm" id="btnSemuaHadir" type="button">✔ Tandai Semua Hadir</button>
+      </div>
+
+      <div class="stats" id="presensiStats"></div>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th style="width:40px">No</th><th>Nama Siswa</th><th style="width:200px">Status</th></tr></thead>
+          <tbody id="presensiBody"></tbody>
+        </table>
+      </div>
+      <p class="empty" id="presensiEmptyMsg" hidden>Belum ada siswa di kelas ini. Tambahkan siswa di menu "Kelas &amp; Siswa".</p>
+
+      <div class="legend">
+        <span><b style="color:var(--green)">H</b>Hadir</span>
+        <span><b style="color:var(--orange)">S</b>Sakit</span>
+        <span><b style="color:var(--blue)">I</b>Izin</span>
+        <span><b style="color:var(--red)">A</b>Tanpa Keterangan (Alpa)</span>
+      </div>
+
+      <div class="row" style="margin-top:14px;justify-content:flex-end">
+        <button class="btn primary" id="btnSimpanPresensi" type="button">💾 Simpan Presensi</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== PAGE: REKAP ===================== -->
+  <section id="rekap" class="page">
+    <div class="card">
+      <div class="row between" id="toggleSettingsRow" style="cursor:pointer">
+        <h2>Pengaturan Kop &amp; Tanda Tangan</h2>
+        <button type="button" class="btn secondary sm" id="settingsChevron">Buka ▾</button>
+      </div>
+      <div id="settingsBox" class="settings-box" hidden>
+        <div class="grid2">
+          <div>
+            <label class="field-label">Nama Sekolah</label>
+            <input id="setNamaSekolah" placeholder="SD NEGERI TANJUNG 03">
+          </div>
+          <div>
+            <label class="field-label">Kabupaten / Sub-judul</label>
+            <input id="setKabupaten" placeholder="KAB. BREBES">
+          </div>
+          <div>
+            <label class="field-label">Tempat Cetak (untuk tanggal surat)</label>
+            <input id="setTempat" placeholder="Tanjung">
+          </div>
+          <div>
+            <label class="field-label">Jabatan / Mapel</label>
+            <input id="setMapel" placeholder="Guru Penjasorkes">
+          </div>
+          <div>
+            <label class="field-label">Nama Guru</label>
+            <input id="setNamaGuru" placeholder="Wahyu Riski Maulana, S.Pd.,Gr.">
+          </div>
+          <div>
+            <label class="field-label">NIP</label>
+            <input id="setNip" placeholder="199608032022211003">
+          </div>
+        </div>
+        <div class="row" style="margin-top:10px;justify-content:flex-end">
+          <button class="btn primary sm" id="btnSimpanSettings" type="button">Simpan Pengaturan</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Rekap Kehadiran</h2>
+      <p class="muted">Rekap dihitung dari data presensi yang sudah disimpan pada rentang tanggal berikut.</p>
+      <div class="grid2">
+        <div>
+          <label class="field-label">Kelas</label>
+          <select id="rekapKelas"></select>
+        </div>
+        <div>
+          <label class="field-label">Bulan Rekap</label>
+          <input type="month" id="rekapBulan">
+        </div>
+      </div>
+      <div class="grid2">
+        <div>
+          <label class="field-label">Dari Tanggal (opsional, isi untuk rentang custom)</label>
+          <input type="date" id="rekapDari">
+        </div>
+        <div>
+          <label class="field-label">Sampai Tanggal (opsional)</label>
+          <input type="date" id="rekapSampai">
+        </div>
+      </div>
+      <p class="small-muted">Kosongkan "Dari/Sampai Tanggal" untuk memakai rekap 1 bulan penuh sesuai pilihan "Bulan Rekap" di atas.</p>
+
+      <div class="stats" id="rekapStats"></div>
+
+      <div class="table-wrap">
+        <table id="rekapTable">
+          <thead><tr id="rekapTableHead"></tr></thead>
+          <tbody id="rekapTableBody"></tbody>
+        </table>
+      </div>
+      <p class="empty" id="rekapEmptyMsg" hidden>Belum ada data presensi pada rentang ini.</p>
+
+      <div class="row" style="margin-top:16px;justify-content:flex-end">
+        <button class="btn primary" id="btnUnduhPdf" type="button">📄 Unduh Rekap PDF</button>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
