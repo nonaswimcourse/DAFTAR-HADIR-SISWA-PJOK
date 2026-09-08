@@ -11,6 +11,7 @@
 <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"
   onerror="this.onerror=null;this.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js'"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 </head>
 <body>
 
@@ -26,7 +27,7 @@
   <button class="tab active" data-page="kelas">🏫 Kelas &amp; Siswa</button>
   <button class="tab" data-page="presensi">✅ Presensi Harian</button>
   <button class="tab" data-page="rekap">📊 Rekap &amp; Cetak</button>
-  <button class="tab" data-page="backup">☁️ Backup Data</button>
+  <button class="tab" data-page="backup">☁️ Google Drive</button>
 </nav>
 
 <main>
@@ -222,52 +223,20 @@
     </div>
   </section>
 
-  <!-- ===================== PAGE: BACKUP ===================== -->
+  <!-- ===================== PAGE: BACKUP (Google Drive) ===================== -->
   <section id="backup" class="page">
     <div class="card">
-      <h2>Cadangkan Data (Backup)</h2>
-      <p class="muted">Semua data (kelas, siswa, presensi setiap tanggal) tersimpan di memori peramban HP/laptop ini. Unduh cadangannya secara rutin agar data tidak hilang, lalu simpan filenya ke Google Drive (unggah manual seperti unggah foto/dokumen biasa).</p>
-      <div class="row" style="gap:8px">
-        <button class="btn primary" id="btnDownloadBackup" type="button">⬇️ Unduh Backup Data (.json)</button>
-        <label class="btn secondary" for="inputRestoreBackup" style="display:inline-flex;align-items:center">⬆️ Pulihkan dari File Backup</label>
-        <input type="file" id="inputRestoreBackup" accept="application/json" hidden>
+      <h2>Kirim ke Google Drive</h2>
+      <p class="muted">Semua data (kelas, siswa, presensi setiap tanggal) tersimpan otomatis di database Supabase — bukan lagi di peramban HP/laptop ini. Fitur di bawah ini hanya untuk mengirim salinan cadangan (JSON) atau PDF rekap terakhir ke folder Google Drive sekolah, sebagai lapisan cadangan tambahan.</p>
+      <div class="row" style="margin-top:10px">
+        <button class="btn secondary sm" id="btnConnectDrive" type="button">🔗 Hubungkan Google Drive</button>
+        <span class="small-muted" id="gdriveStatus">Belum terhubung</span>
       </div>
-      <p class="small-muted">File backup berisi seluruh data kelas, siswa, dan presensi per tanggal. Cara paling mudah mengunggah ke Google Drive: buka Google Drive di HP/laptop → tombol "+ Baru" → "Upload file" → pilih file backup yang baru diunduh.</p>
-    </div>
-
-    <div class="card">
-      <div class="row between" id="toggleGdriveRow" style="cursor:pointer">
-        <h2>Unggah Otomatis ke Google Drive (Opsional/Lanjutan)</h2>
-        <button type="button" class="btn secondary sm" id="gdriveChevron">Tutup ▴</button>
+      <div class="row" style="margin-top:10px;gap:8px">
+        <button class="btn primary sm" id="btnUploadJsonDrive" type="button">⬆️ Unggah Backup JSON ke Drive</button>
+        <button class="btn primary sm" id="btnUploadPdfDrive" type="button">⬆️ Unggah PDF Rekap Terakhir ke Drive</button>
       </div>
-      <div id="gdriveBox">
-        <p class="muted">Fitur ini menghubungkan aplikasi langsung ke akun Google Drive Bapak/Ibu supaya backup bisa diunggah dengan satu klik, tanpa unduh-lalu-upload manual. Karena aplikasi ini berjalan mandiri (bukan lewat server Anthropic/Google resmi), fitur ini butuh "Google Client ID" milik sendiri yang dibuat lewat Google Cloud Console, dan aplikasi harus diakses lewat alamat web (http/https, mis. GitHub Pages/Netlify/hosting sekolah) — bukan dibuka langsung dari file di komputer.</p>
-
-        <details class="howto">
-          <summary>Cara membuat Google Client ID (sekali saja)</summary>
-          <ol>
-            <li>Buka <a href="https://console.cloud.google.com/" target="_blank" rel="noopener">console.cloud.google.com</a>, buat proyek baru (mis. "Presensi SDN Tanjung 03").</li>
-            <li>Menu "APIs &amp; Services" → "Library" → aktifkan <b>Google Drive API</b>.</li>
-            <li>Menu "APIs &amp; Services" → "OAuth consent screen" → pilih External → isi nama aplikasi & email, simpan (status Testing sudah cukup, tambahkan email Bapak/Ibu sebagai Test user).</li>
-            <li>Menu "Credentials" → "Create Credentials" → "OAuth client ID" → tipe <b>Web application</b>.</li>
-            <li>Pada "Authorized JavaScript origins", isi alamat web tempat aplikasi ini dihost (mis. <code>https://namasekolah.github.io</code>).</li>
-            <li>Salin "Client ID" yang muncul, tempel di kolom di bawah, lalu klik Simpan.</li>
-          </ol>
-        </details>
-
-        <label class="field-label">Google Client ID</label>
-        <input id="setGoogleClientId" placeholder="xxxxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.apps.googleusercontent.com">
-        <div class="row" style="margin-top:10px">
-          <button class="btn secondary sm" id="btnSimpanClientId" type="button">Simpan Client ID</button>
-          <button class="btn secondary sm" id="btnConnectDrive" type="button">🔗 Hubungkan Google Drive</button>
-          <span class="small-muted" id="gdriveStatus">Belum terhubung</span>
-        </div>
-        <div class="row" style="margin-top:10px;gap:8px">
-          <button class="btn primary sm" id="btnUploadJsonDrive" type="button">⬆️ Unggah Backup JSON ke Drive</button>
-          <button class="btn primary sm" id="btnUploadPdfDrive" type="button">⬆️ Unggah PDF Rekap Terakhir ke Drive</button>
-        </div>
-        <p class="small-muted">Unggah PDF memakai file rekap terakhir yang dibuat di tab "Rekap &amp; Cetak" (klik "Unduh Rekap PDF" dahulu di tab tersebut).</p>
-      </div>
+      <p class="small-muted">Unggah PDF memakai file rekap terakhir yang dibuat di tab "Rekap &amp; Cetak" (klik "Unduh Rekap PDF" dahulu di tab tersebut). File akan masuk ke folder Google Drive yang sudah ditentukan di <code>config.js</code>.</p>
     </div>
   </section>
 
@@ -275,6 +244,6 @@
 
 <div class="toast" id="toast"></div>
 
-<script src="app.js"></script>
+<script type="module" src="app.js"></script>
 </body>
 </html>

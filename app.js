@@ -1,6 +1,17 @@
-/* ============================ DATA LAYER ============================ */
-const STORAGE_KEY = "presensiSiswaData_v1";
+/* ============================ SUPABASE SETUP ============================ */
+import { SUPABASE_URL, SUPABASE_ANON_KEY, GOOGLE_CLIENT_ID, GOOGLE_DRIVE_FOLDER_ID } from './config.js';
 
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// GOOGLE_DRIVE_FOLDER_ID di config.js boleh diisi URL folder lengkap atau ID saja.
+function extractDriveFolderId(v){
+  if(!v) return '';
+  const m = String(v).match(/[-\w]{20,}/);
+  return m ? m[0] : String(v).trim();
+}
+const DRIVE_FOLDER_ID = extractDriveFolderId(GOOGLE_DRIVE_FOLDER_ID);
+
+/* ============================ DATA LAYER (Supabase) ============================ */
 function defaultSettings(){
   return {
     pemerintah: "PEMERINTAH KABUPATEN BREBES",
@@ -11,33 +22,17 @@ function defaultSettings(){
     tempat: "Tanjung",
     mapel: "Guru Penjasorkes",
     namaGuru: "Wahyu Riski Maulana, S.Pd.,Gr.",
-    nip: "199608032022211003",
-    googleClientId: ""
+    nip: "199608032022211003"
   };
 }
 
-function loadData(){
-  try{
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if(raw){
-      const parsed = JSON.parse(raw);
-      // migrasi: lengkapi field pengaturan baru jika belum ada (data lama)
-      parsed.settings = Object.assign(defaultSettings(), parsed.settings || {});
-      if(!parsed.attendance) parsed.attendance = {};
-      if(!parsed.classes) parsed.classes = [];
-      if(!parsed.students) parsed.students = [];
-      return parsed;
-    }
-  }catch(e){}
-  return {
-    classes: [],
-    students: [],
-    attendance: {},
-    settings: defaultSettings()
-  };
-}
-let DATA = loadData();
-function saveData(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(DATA)); }
+// Cache lokal di memori (bukan localStorage) — sumber data sesungguhnya ada di Supabase.
+let DATA = {
+  classes: [],    // {id, nama}
+  students: [],   // {id, classId, nama}
+  attendance: {}, // cache per sesi: {[classId]: {[tanggal]: {[siswaId]: status}}}
+  settings: defaultSettings()
+};
 
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
 
@@ -49,15 +44,137 @@ function toast(msg){
   toast._tm = setTimeout(()=>t.classList.remove('show'), 2200);
 }
 
+function dbErr(aksi, err){
+  console.error(aksi, err);
+  toast(`Gagal ${aksi}: ${(err && err.message) || err}`);
+}
+
+/* --------- KELAS --------- */
+async function dbFetchKelas(){
+  const { data, error } = await sb.from('kelas').select('*').order('nama', { ascending:true });
+  if(error){ dbErr('memuat data kelas', error); return; }
+  DATA.classes = (data||[]).map(k=>({ id:k.id, nama:k.nama }));
+}
+async function dbInsertKelas(nama){
+  const kelas = { id: uid(), nama };
+  const { error } = await sb.from('kelas').insert(kelas);
+  if(error){ dbErr('menambah kelas', error); return null; }
+  DATA.classes.push(kelas);
+  return kelas;
+}
+async function dbDeleteKelas(id){
+  const { error } = await sb.from('kelas').delete().eq('id', id);
+  if(error){ dbErr('menghapus kelas', error); return false; }
+  DATA.classes = DATA.classes.filter(c=>c.id!==id);
+  DATA.students = DATA.students.filter(s=>s.classId!==id);
+  delete DATA.attendance[id];
+  return true;
+}
+
+/* --------- SISWA --------- */
+async function dbFetchSiswa(){
+  const { data, error } = await sb.from('siswa').select('*');
+  if(error){ dbErr('memuat data siswa', error); return; }
+  DATA.students = (data||[]).map(s=>({ id:s.id, classId:s.kelas_id, nama:s.nama }));
+}
+async function dbInsertSiswaBanyak(classId, namaList){
+  const rows = namaList.map(nama=>({ id: uid(), kelas_id: classId, nama }));
+  const { error } = await sb.from('siswa').insert(rows);
+  if(error){ dbErr('menambah siswa', error); return false; }
+  rows.forEach(r=> DATA.students.push({ id:r.id, classId:r.kelas_id, nama:r.nama }));
+  return true;
+}
+async function dbDeleteSiswa(id){
+  const { error } = await sb.from('siswa').delete().eq('id', id);
+  if(error){ dbErr('menghapus siswa', error); return false; }
+  DATA.students = DATA.students.filter(x=>x.id!==id);
+  return true;
+}
+
+/* --------- PRESENSI (ATTENDANCE) --------- */
+async function dbFetchAttendanceForDate(classId, date){
+  const { data, error } = await sb.from('presensi').select('siswa_id,status')
+    .eq('kelas_id', classId).eq('tanggal', date);
+  if(error){ dbErr('memuat presensi', error); return {}; }
+  const rec = {};
+  (data||[]).forEach(r=> rec[r.siswa_id] = r.status);
+  if(!DATA.attendance[classId]) DATA.attendance[classId] = {};
+  DATA.attendance[classId][date] = rec;
+  return rec;
+}
+async function dbSaveAttendance(classId, date, record){
+  const rows = Object.keys(record).map(siswaId=>({
+    kelas_id: classId, siswa_id: siswaId, tanggal: date, status: record[siswaId]
+  }));
+  if(!rows.length) return true;
+  const { error } = await sb.from('presensi').upsert(rows, { onConflict: 'kelas_id,siswa_id,tanggal' });
+  if(error){ dbErr('menyimpan presensi', error); return false; }
+  return true;
+}
+async function dbFetchAttendanceRange(classId, start, end){
+  const { data, error } = await sb.from('presensi').select('siswa_id,tanggal,status')
+    .eq('kelas_id', classId).gte('tanggal', start).lte('tanggal', end);
+  if(error){ dbErr('memuat rekap presensi', error); return {}; }
+  const byDate = {};
+  (data||[]).forEach(r=>{
+    if(!byDate[r.tanggal]) byDate[r.tanggal] = {};
+    byDate[r.tanggal][r.siswa_id] = r.status;
+  });
+  return byDate;
+}
+
+/* --------- PENGATURAN (SETTINGS) --------- */
+async function dbFetchSettings(){
+  const { data, error } = await sb.from('pengaturan').select('*').eq('id','main').maybeSingle();
+  if(error){ dbErr('memuat pengaturan', error); return; }
+  if(data){
+    DATA.settings = {
+      pemerintah: data.pemerintah || defaultSettings().pemerintah,
+      dinas: data.dinas || defaultSettings().dinas,
+      korwilcam: data.korwilcam || defaultSettings().korwilcam,
+      namaSekolah: data.nama_sekolah || defaultSettings().namaSekolah,
+      alamat: data.alamat || defaultSettings().alamat,
+      tempat: data.tempat || defaultSettings().tempat,
+      mapel: data.mapel || defaultSettings().mapel,
+      namaGuru: data.nama_guru || defaultSettings().namaGuru,
+      nip: data.nip || defaultSettings().nip
+    };
+  } else {
+    await dbSaveSettings(defaultSettings());
+  }
+}
+async function dbSaveSettings(settings){
+  const row = {
+    id: 'main',
+    pemerintah: settings.pemerintah,
+    dinas: settings.dinas,
+    korwilcam: settings.korwilcam,
+    nama_sekolah: settings.namaSekolah,
+    alamat: settings.alamat,
+    tempat: settings.tempat,
+    mapel: settings.mapel,
+    nama_guru: settings.namaGuru,
+    nip: settings.nip
+  };
+  const { error } = await sb.from('pengaturan').upsert(row, { onConflict: 'id' });
+  if(error){ dbErr('menyimpan pengaturan', error); return false; }
+  DATA.settings = settings;
+  return true;
+}
+
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
 /* ============================ NAV ============================ */
 document.querySelectorAll('nav.tabs .tab').forEach(btn=>{
-  btn.addEventListener('click', ()=>{
+  btn.addEventListener('click', async ()=>{
     document.querySelectorAll('nav.tabs .tab').forEach(b=>b.classList.remove('active'));
     document.querySelectorAll('main .page').forEach(p=>p.classList.remove('active'));
     btn.classList.add('active');
     document.getElementById(btn.dataset.page).classList.add('active');
-    if(btn.dataset.page === 'presensi') renderPresensi();
-    if(btn.dataset.page === 'rekap') renderRekap();
+    if(btn.dataset.page === 'presensi') await renderPresensi();
+    if(btn.dataset.page === 'rekap') await renderRekap();
   });
 });
 
@@ -68,8 +185,7 @@ function renderKelasChips(){
   const wrap = document.getElementById('daftarKelasChip');
   const empty = document.getElementById('kelasEmptyMsg');
   wrap.innerHTML = '';
-  if(DATA.classes.length === 0){ empty.hidden = false; }
-  else{ empty.hidden = true; }
+  empty.hidden = DATA.classes.length !== 0;
   if(kelasAktifId && !DATA.classes.find(k=>k.id===kelasAktifId)) kelasAktifId = null;
   if(!kelasAktifId && DATA.classes.length) kelasAktifId = DATA.classes[0].id;
 
@@ -83,16 +199,15 @@ function renderKelasChips(){
       renderKelasChips();
       renderSiswaList();
     });
-    chip.querySelector('.del').addEventListener('click', (e)=>{
+    chip.querySelector('.del').addEventListener('click', async (e)=>{
       e.stopPropagation();
       if(confirm(`Hapus kelas "${k.nama}"? Semua data siswa & presensi di kelas ini juga akan terhapus.`)){
-        DATA.classes = DATA.classes.filter(c=>c.id!==k.id);
-        DATA.students = DATA.students.filter(s=>s.classId!==k.id);
-        delete DATA.attendance[k.id];
-        saveData();
+        const ok = await dbDeleteKelas(k.id);
+        if(!ok) return;
         renderKelasChips();
         renderSiswaList();
         refreshKelasSelects();
+        toast('Kelas dihapus');
       }
     });
     wrap.appendChild(chip);
@@ -102,25 +217,20 @@ function renderKelasChips(){
     ? '- ' + DATA.classes.find(k=>k.id===kelasAktifId).nama : '';
 }
 
-document.getElementById('formKelas').addEventListener('submit', (e)=>{
+document.getElementById('formKelas').addEventListener('submit', async (e)=>{
   e.preventDefault();
   const inp = document.getElementById('inputKelasNama');
   const nama = inp.value.trim();
   if(!nama) return;
-  const kelas = {id: uid(), nama};
-  DATA.classes.push(kelas);
+  const kelas = await dbInsertKelas(nama);
+  if(!kelas) return;
   kelasAktifId = kelas.id;
-  saveData();
   inp.value = '';
   renderKelasChips();
   renderSiswaList();
   refreshKelasSelects();
   toast('Kelas ditambahkan');
 });
-
-function escapeHtml(s){
-  return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-}
 
 /* ============================ SISWA ============================ */
 function renderSiswaList(){
@@ -136,38 +246,37 @@ function renderSiswaList(){
     const tr = document.createElement('tr');
     tr.innerHTML = `<td>${i+1}</td><td>${escapeHtml(s.nama)}</td>
       <td><button class="btn danger sm" data-del="${s.id}">Hapus</button></td>`;
-    tr.querySelector('[data-del]').addEventListener('click', ()=>{
+    tr.querySelector('[data-del]').addEventListener('click', async ()=>{
       if(confirm(`Hapus siswa "${s.nama}"?`)){
-        DATA.students = DATA.students.filter(x=>x.id!==s.id);
-        saveData();
+        const ok = await dbDeleteSiswa(s.id);
+        if(!ok) return;
         renderSiswaList();
+        toast('Siswa dihapus');
       }
     });
     tbody.appendChild(tr);
   });
 }
 
-document.getElementById('formSiswa').addEventListener('submit', (e)=>{
+document.getElementById('formSiswa').addEventListener('submit', async (e)=>{
   e.preventDefault();
   if(!kelasAktifId){ toast('Pilih kelas terlebih dahulu'); return; }
   const inp = document.getElementById('inputSiswaNama');
   const nama = inp.value.trim();
   if(!nama) return;
-  DATA.students.push({id: uid(), classId: kelasAktifId, nama});
-  saveData();
+  const ok = await dbInsertSiswaBanyak(kelasAktifId, [nama]);
+  if(!ok) return;
   inp.value='';
   renderSiswaList();
 });
 
-document.getElementById('importSiswaBtn').addEventListener('click', ()=>{
+document.getElementById('importSiswaBtn').addEventListener('click', async ()=>{
   if(!kelasAktifId){ toast('Pilih kelas terlebih dahulu'); return; }
   const ta = document.getElementById('importSiswaText');
   const lines = ta.value.split('\n').map(x=>x.trim()).filter(Boolean);
   if(!lines.length) return;
-  lines.forEach(nama=>{
-    DATA.students.push({id: uid(), classId: kelasAktifId, nama});
-  });
-  saveData();
+  const ok = await dbInsertSiswaBanyak(kelasAktifId, lines);
+  if(!ok) return;
   ta.value = '';
   renderSiswaList();
   toast(`${lines.length} siswa ditambahkan`);
@@ -201,13 +310,12 @@ document.getElementById('presensiTanggal').value = todayStr();
 
 const STATUS_LABEL = {H:'Hadir', S:'Sakit', I:'Izin', A:'Tanpa Keterangan'};
 
-function getAttendanceRecord(classId, date){
-  if(!DATA.attendance[classId]) DATA.attendance[classId] = {};
-  if(!DATA.attendance[classId][date]) DATA.attendance[classId][date] = {};
-  return DATA.attendance[classId][date];
+async function getAttendanceRecord(classId, date){
+  if(DATA.attendance[classId] && DATA.attendance[classId][date]) return DATA.attendance[classId][date];
+  return await dbFetchAttendanceForDate(classId, date);
 }
 
-function renderPresensi(){
+async function renderPresensi(){
   refreshKelasSelects();
   const classId = document.getElementById('presensiKelas').value;
   const date = document.getElementById('presensiTanggal').value || todayStr();
@@ -220,7 +328,7 @@ function renderPresensi(){
   emptyMsg.hidden = list.length>0;
   if(!list.length){ updatePresensiStats({}); return; }
 
-  const record = getAttendanceRecord(classId, date);
+  const record = await getAttendanceRecord(classId, date);
 
   list.forEach((s,i)=>{
     if(!record[s.id]) record[s.id] = 'H';
@@ -265,22 +373,24 @@ function updatePresensiStats(record){
 document.getElementById('presensiKelas').addEventListener('change', renderPresensi);
 document.getElementById('presensiTanggal').addEventListener('change', renderPresensi);
 
-document.getElementById('btnSemuaHadir').addEventListener('click', ()=>{
+document.getElementById('btnSemuaHadir').addEventListener('click', async ()=>{
   const classId = document.getElementById('presensiKelas').value;
   const date = document.getElementById('presensiTanggal').value || todayStr();
   if(!classId) return;
   const list = DATA.students.filter(s=>s.classId===classId);
-  const record = getAttendanceRecord(classId, date);
+  const record = await getAttendanceRecord(classId, date);
   list.forEach(s=> record[s.id] = 'H');
   renderPresensi();
   toast('Semua siswa ditandai Hadir');
 });
 
-document.getElementById('btnSimpanPresensi').addEventListener('click', ()=>{
+document.getElementById('btnSimpanPresensi').addEventListener('click', async ()=>{
   const classId = document.getElementById('presensiKelas').value;
   if(!classId){ toast('Pilih kelas terlebih dahulu'); return; }
   const date = document.getElementById('presensiTanggal').value || todayStr();
-  saveData();
+  const record = await getAttendanceRecord(classId, date);
+  const ok = await dbSaveAttendance(classId, date, record);
+  if(!ok) return;
   toast(`Presensi tanggal ${formatIndoDateFromStr(date)} tersimpan`);
 });
 
@@ -307,9 +417,7 @@ function loadSettingsForm(){
   document.getElementById('setMapel').value = s.mapel || '';
   document.getElementById('setNamaGuru').value = s.namaGuru || '';
   document.getElementById('setNip').value = s.nip || '';
-  document.getElementById('setGoogleClientId').value = s.googleClientId || '';
 }
-loadSettingsForm();
 
 document.getElementById('toggleSettingsRow').addEventListener('click', ()=>{
   const box = document.getElementById('settingsBox');
@@ -317,8 +425,8 @@ document.getElementById('toggleSettingsRow').addEventListener('click', ()=>{
   document.getElementById('settingsChevron').textContent = box.hidden ? 'Buka ▾' : 'Tutup ▴';
 });
 
-document.getElementById('btnSimpanSettings').addEventListener('click', ()=>{
-  DATA.settings = Object.assign({}, DATA.settings, {
+document.getElementById('btnSimpanSettings').addEventListener('click', async ()=>{
+  const settings = Object.assign({}, DATA.settings, {
     pemerintah: document.getElementById('setPemerintah').value.trim() || defaultSettings().pemerintah,
     dinas: document.getElementById('setDinas').value.trim() || defaultSettings().dinas,
     korwilcam: document.getElementById('setKorwilcam').value.trim() || defaultSettings().korwilcam,
@@ -329,7 +437,8 @@ document.getElementById('btnSimpanSettings').addEventListener('click', ()=>{
     namaGuru: document.getElementById('setNamaGuru').value.trim(),
     nip: document.getElementById('setNip').value.trim()
   });
-  saveData();
+  const ok = await dbSaveSettings(settings);
+  if(!ok) return;
   renderKopPreview();
   document.getElementById('schoolSubTitle').textContent = 'Presensi Peserta Didik';
   toast('Pengaturan disimpan');
@@ -357,12 +466,6 @@ function dateRangeFromInputs(){
   return null;
 }
 
-// Semua tanggal presensi yang benar-benar tersimpan (bukan cuma total), diurutkan kronologis
-function getSortedDatesInRange(classId, start, end){
-  const rec = DATA.attendance[classId] || {};
-  return Object.keys(rec).filter(d=> d>=start && d<=end).sort();
-}
-
 function shortDate(d){
   const [y,m,day] = d.split('-');
   return day+'/'+m;
@@ -370,7 +473,7 @@ function shortDate(d){
 
 let lastRekapPayload = null;
 
-function renderRekap(){
+async function renderRekap(){
   refreshKelasSelects();
   const classId = document.getElementById('rekapKelas').value;
   const head = document.getElementById('rekapTableHead');
@@ -384,7 +487,8 @@ function renderRekap(){
   const range = dateRangeFromInputs();
   if(!range){ emptyMsg.hidden=false; return; }
 
-  const dates = getSortedDatesInRange(classId, range.start, range.end);
+  const byDate = await dbFetchAttendanceRange(classId, range.start, range.end);
+  const dates = Object.keys(byDate).sort();
   const students = DATA.students.filter(s=>s.classId===classId).sort((a,b)=>a.nama.localeCompare(b.nama,'id'));
 
   if(!students.length || !dates.length){
@@ -410,7 +514,7 @@ function renderRekap(){
     const counts = {H:0,S:0,I:0,A:0};
     const cellMarks = [];
     dates.forEach(d=>{
-      const st = (DATA.attendance[classId][d] || {})[s.id] || '-';
+      const st = (byDate[d] || {})[s.id] || '-';
       if(counts[st]!==undefined) counts[st]++;
       cellMarks.push(st);
     });
@@ -446,8 +550,8 @@ document.getElementById('rekapDari').addEventListener('change', renderRekap);
 document.getElementById('rekapSampai').addEventListener('change', renderRekap);
 
 /* ============================ EXPORT CSV / EXCEL (per tanggal) ============================ */
-document.getElementById('btnUnduhCsv').addEventListener('click', ()=>{
-  renderRekap();
+document.getElementById('btnUnduhCsv').addEventListener('click', async ()=>{
+  await renderRekap();
   if(!lastRekapPayload){ toast('Tidak ada data untuk diunduh'); return; }
   const p = lastRekapPayload;
   const s = DATA.settings;
@@ -516,7 +620,7 @@ let lastPdfDoc = null;
 let lastPdfFilename = null;
 
 document.getElementById('btnUnduhPdf').addEventListener('click', async ()=>{
-  renderRekap();
+  await renderRekap();
   if(!lastRekapPayload){ toast('Tidak ada data untuk dicetak'); return; }
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({orientation:'landscape', unit:'pt', format:'a4'});
@@ -610,69 +714,19 @@ document.getElementById('btnUnduhPdf').addEventListener('click', async ()=>{
   toast('PDF berhasil diunduh');
 });
 
-/* ============================ BACKUP: DOWNLOAD / RESTORE (JSON) ============================ */
-document.getElementById('btnDownloadBackup').addEventListener('click', ()=>{
-  const json = JSON.stringify(DATA, null, 2);
-  const blob = new Blob([json], {type:'application/json'});
-  const stamp = todayStr();
-  downloadBlob(blob, `Backup_Presensi_${(DATA.settings.namaSekolah||'Sekolah').replace(/\s+/g,'_')}_${stamp}.json`);
-  toast('Backup JSON diunduh. Unggah file ini ke Google Drive Anda.');
-});
-
-document.getElementById('inputRestoreBackup').addEventListener('change', (e)=>{
-  const file = e.target.files[0];
-  if(!file) return;
-  const reader = new FileReader();
-  reader.onload = ()=>{
-    try{
-      const parsed = JSON.parse(reader.result);
-      if(!parsed.classes || !parsed.students || !parsed.attendance){
-        toast('File backup tidak valid'); return;
-      }
-      if(!confirm('Memulihkan backup akan menimpa data yang ada saat ini di aplikasi. Lanjutkan?')) return;
-      parsed.settings = Object.assign(defaultSettings(), parsed.settings || {});
-      DATA = parsed;
-      saveData();
-      kelasAktifId = null;
-      renderKelasChips(); renderSiswaList(); refreshKelasSelects();
-      renderPresensi(); renderRekap(); loadSettingsForm(); renderKopPreview();
-      toast('Data berhasil dipulihkan dari backup');
-    }catch(err){
-      toast('Gagal membaca file backup');
-    }
-    e.target.value = '';
-  };
-  reader.readAsText(file);
-});
-
-/* ============================ GOOGLE DRIVE (opsional) ============================ */
+/* ============================ GOOGLE DRIVE (kredensial dari config.js) ============================ */
 let gdriveToken = null;
 let gdriveTokenClient = null;
 
-document.getElementById('toggleGdriveRow').addEventListener('click', ()=>{
-  const box = document.getElementById('gdriveBox');
-  box.hidden = !box.hidden;
-  document.getElementById('gdriveChevron').textContent = box.hidden ? 'Buka ▾' : 'Tutup ▴';
-});
-
-document.getElementById('btnSimpanClientId').addEventListener('click', ()=>{
-  DATA.settings.googleClientId = document.getElementById('setGoogleClientId').value.trim();
-  saveData();
-  toast('Google Client ID disimpan');
-});
-
 document.getElementById('btnConnectDrive').addEventListener('click', ()=>{
-  const clientId = (document.getElementById('setGoogleClientId').value || DATA.settings.googleClientId || '').trim();
-  if(!clientId){ toast('Isi & simpan Google Client ID terlebih dahulu'); return; }
+  if(!GOOGLE_CLIENT_ID){ toast('GOOGLE_CLIENT_ID belum diisi di config.js'); return; }
   if(typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2){
     toast('Layanan Google belum siap. Pastikan aplikasi diakses via http/https dan koneksi internet aktif.');
     return;
   }
-  DATA.settings.googleClientId = clientId;
-  saveData();
   try{
     gdriveTokenClient = google.accounts.oauth2.initTokenClient({
-      client_id: clientId,
+      client_id: GOOGLE_CLIENT_ID,
       scope: 'https://www.googleapis.com/auth/drive.file',
       callback: (resp)=>{
         if(resp.error){
@@ -688,7 +742,7 @@ document.getElementById('btnConnectDrive').addEventListener('click', ()=>{
     });
     gdriveTokenClient.requestAccessToken();
   }catch(err){
-    toast('Gagal memulai koneksi Google. Periksa Client ID & pengaturan origin di Google Cloud Console.');
+    toast('Gagal memulai koneksi Google. Periksa GOOGLE_CLIENT_ID & pengaturan origin di Google Cloud Console.');
   }
 });
 
@@ -696,6 +750,7 @@ async function uploadToDrive(filename, mimeType, dataStr, isBase64){
   if(!gdriveToken){ toast('Hubungkan Google Drive terlebih dahulu'); return null; }
   const boundary = 'presensi_boundary_' + Date.now();
   const metadata = { name: filename, mimeType };
+  if(DRIVE_FOLDER_ID) metadata.parents = [DRIVE_FOLDER_ID];
   const body =
     `--${boundary}\r\n` +
     `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
@@ -721,12 +776,38 @@ async function uploadToDrive(filename, mimeType, dataStr, isBase64){
   return res.json();
 }
 
+// Ambil seluruh data langsung dari Supabase (bukan dari cache sesi) supaya backup JSON selalu lengkap & terbaru.
+async function buildFullBackupJson(){
+  const [kelasRes, siswaRes, presensiRes, pengaturanRes] = await Promise.all([
+    sb.from('kelas').select('*'),
+    sb.from('siswa').select('*'),
+    sb.from('presensi').select('*'),
+    sb.from('pengaturan').select('*').eq('id','main').maybeSingle()
+  ]);
+  if(kelasRes.error || siswaRes.error || presensiRes.error || pengaturanRes.error){
+    throw new Error('Gagal mengambil data dari Supabase untuk backup');
+  }
+  const attendance = {};
+  (presensiRes.data||[]).forEach(r=>{
+    if(!attendance[r.kelas_id]) attendance[r.kelas_id] = {};
+    if(!attendance[r.kelas_id][r.tanggal]) attendance[r.kelas_id][r.tanggal] = {};
+    attendance[r.kelas_id][r.tanggal][r.siswa_id] = r.status;
+  });
+  return {
+    classes: (kelasRes.data||[]).map(k=>({id:k.id, nama:k.nama})),
+    students: (siswaRes.data||[]).map(s=>({id:s.id, classId:s.kelas_id, nama:s.nama})),
+    attendance,
+    settings: DATA.settings
+  };
+}
+
 document.getElementById('btnUploadJsonDrive').addEventListener('click', async ()=>{
   try{
-    const json = JSON.stringify(DATA, null, 2);
+    toast('Menyiapkan data & mengunggah backup ke Google Drive...');
+    const backup = await buildFullBackupJson();
+    const json = JSON.stringify(backup, null, 2);
     const stamp = todayStr();
     const fname = `Backup_Presensi_${(DATA.settings.namaSekolah||'Sekolah').replace(/\s+/g,'_')}_${stamp}.json`;
-    toast('Mengunggah backup ke Google Drive...');
     const result = await uploadToDrive(fname, 'application/json', json, false);
     if(result) toast('Backup JSON berhasil diunggah ke Google Drive');
   }catch(err){
@@ -748,10 +829,16 @@ document.getElementById('btnUploadPdfDrive').addEventListener('click', async ()=
 });
 
 /* ============================ INIT ============================ */
-renderKelasChips();
-renderSiswaList();
-refreshKelasSelects();
-renderPresensi();
-renderRekap();
-renderKopPreview();
-document.getElementById('schoolSubTitle').textContent = 'Presensi Peserta Didik';
+async function init(){
+  toast('Memuat data dari server...');
+  await Promise.all([dbFetchKelas(), dbFetchSiswa(), dbFetchSettings()]);
+  renderKelasChips();
+  renderSiswaList();
+  refreshKelasSelects();
+  await renderPresensi();
+  await renderRekap();
+  renderKopPreview();
+  loadSettingsForm();
+  document.getElementById('schoolSubTitle').textContent = 'Presensi Peserta Didik';
+}
+init();
