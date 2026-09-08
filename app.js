@@ -111,6 +111,27 @@ async function dbSaveAttendance(classId, date, record){
   if(error){ dbErr('menyimpan presensi', error); return false; }
   return true;
 }
+async function dbUpdateAttendanceStatus(classId, siswaId, date, status){
+  const { error } = await sb.from('presensi')
+    .upsert({ kelas_id: classId, siswa_id: siswaId, tanggal: date, status }, { onConflict: 'kelas_id,siswa_id,tanggal' });
+  if(error){ dbErr('mengubah presensi', error); return false; }
+  if(DATA.attendance[classId] && DATA.attendance[classId][date]) DATA.attendance[classId][date][siswaId] = status;
+  return true;
+}
+async function dbDeleteAttendanceRecord(classId, siswaId, date){
+  const { error } = await sb.from('presensi').delete()
+    .eq('kelas_id', classId).eq('siswa_id', siswaId).eq('tanggal', date);
+  if(error){ dbErr('menghapus data presensi', error); return false; }
+  if(DATA.attendance[classId] && DATA.attendance[classId][date]) delete DATA.attendance[classId][date][siswaId];
+  return true;
+}
+async function dbDeleteAttendanceForDate(classId, date){
+  const { error } = await sb.from('presensi').delete()
+    .eq('kelas_id', classId).eq('tanggal', date);
+  if(error){ dbErr('menghapus presensi tanggal ini', error); return false; }
+  if(DATA.attendance[classId]) delete DATA.attendance[classId][date];
+  return true;
+}
 async function dbFetchAttendanceRange(classId, start, end){
   const { data, error } = await sb.from('presensi').select('siswa_id,tanggal,status')
     .eq('kelas_id', classId).gte('tanggal', start).lte('tanggal', end);
@@ -499,12 +520,15 @@ async function renderRekap(){
   }
   emptyMsg.hidden = true;
 
-  // header row: setiap tanggal presensi tampil sebagai kolomnya sendiri
-  const trh = document.createElement('tr');
-  trh.innerHTML = '<th style="width:32px">No</th><th style="min-width:140px">Nama Siswa</th>' +
-    dates.map(d=>`<th style="width:40px" title="${formatIndoDateFromStr(d)}">${shortDate(d)}</th>`).join('') +
-    '<th style="width:40px">H</th><th style="width:40px">S</th><th style="width:40px">I</th><th style="width:40px">A</th><th style="width:50px">%Hadir</th>';
-  head.appendChild(trh);
+  // header row: setiap tanggal presensi tampil sebagai kolomnya sendiri.
+  // PENTING: `head` di sini ADALAH elemen <tr id="rekapTableHead"> itu sendiri
+  // (bukan <thead>), jadi isinya harus di-set langsung lewat innerHTML —
+  // BUKAN dengan appendChild(<tr>) lain, karena <tr> di dalam <tr> adalah
+  // HTML tidak valid dan membuat browser "membetulkan" tabel secara otomatis
+  // sehingga kolom jadi berantakan/tidak sejajar.
+  head.innerHTML = '<th style="width:32px">No</th><th style="min-width:140px">Nama Siswa</th>' +
+    dates.map(d=>`<th style="width:52px"><div class="date-th"><span title="${formatIndoDateFromStr(d)}">${shortDate(d)}</span><button type="button" class="date-del-btn" data-tanggal="${d}" title="Hapus semua presensi tanggal ${formatIndoDateFromStr(d)}">✕</button></div></th>`).join('') +
+    '<th style="width:36px">H</th><th style="width:36px">S</th><th style="width:36px">I</th><th style="width:36px">A</th><th style="width:56px">%Hadir</th>';
 
   const classTotals = {H:0,S:0,I:0,A:0};
   const rowsData = [];
@@ -513,17 +537,20 @@ async function renderRekap(){
     const tr = document.createElement('tr');
     const counts = {H:0,S:0,I:0,A:0};
     const cellMarks = [];
+    const markTds = [];
     dates.forEach(d=>{
       const st = (byDate[d] || {})[s.id] || '-';
       if(counts[st]!==undefined) counts[st]++;
       cellMarks.push(st);
+      const warna = st==='H'?'#1e8449':st==='S'?'#d68910':st==='I'?'#2471a3':st==='A'?'#c0392b':'#bbb';
+      markTds.push(`<td class="mark-cell" data-siswa="${s.id}" data-tanggal="${d}" data-status="${st}" title="Klik untuk ubah/hapus" style="text-align:center;color:${warna}">${st}</td>`);
     });
     const totalTercatat = counts.H+counts.S+counts.I+counts.A;
     const pct = totalTercatat ? Math.round((counts.H/totalTercatat)*100) : 0;
     classTotals.H += counts.H; classTotals.S += counts.S; classTotals.I += counts.I; classTotals.A += counts.A;
 
     tr.innerHTML = `<td>${i+1}</td><td style="text-align:left">${escapeHtml(s.nama)}</td>` +
-      cellMarks.map(m=>`<td style="text-align:center;color:${m==='H'?'#1e8449':m==='S'?'#d68910':m==='I'?'#2471a3':m==='A'?'#c0392b':'#bbb'}">${m}</td>`).join('') +
+      markTds.join('') +
       `<td style="text-align:center">${counts.H}</td><td style="text-align:center">${counts.S}</td><td style="text-align:center">${counts.I}</td><td style="text-align:center">${counts.A}</td><td style="text-align:center">${pct}%</td>`;
     body.appendChild(tr);
 
@@ -548,6 +575,68 @@ document.getElementById('rekapKelas').addEventListener('change', renderRekap);
 document.getElementById('rekapBulan').addEventListener('change', renderRekap);
 document.getElementById('rekapDari').addEventListener('change', renderRekap);
 document.getElementById('rekapSampai').addEventListener('change', renderRekap);
+
+/* ---------- REVIEW / EDIT / HAPUS DATA REKAP ---------- */
+let editCtx = null;
+
+function openEditPresensi(classId, siswaId, tanggal, status){
+  const siswa = DATA.students.find(x=>x.id===siswaId);
+  editCtx = { classId, siswaId, tanggal };
+  document.getElementById('editPresensiSub').textContent = `${siswa ? siswa.nama : ''} — ${formatIndoDateFromStr(tanggal)}`;
+  const wrap = document.getElementById('editPresensiBtns');
+  wrap.innerHTML = '';
+  ['H','S','I','A'].forEach(st=>{
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'stbtn ' + st + (status===st ? ' sel' : '');
+    b.textContent = st;
+    b.title = STATUS_LABEL[st];
+    b.addEventListener('click', async ()=>{
+      const ok = await dbUpdateAttendanceStatus(editCtx.classId, editCtx.siswaId, editCtx.tanggal, st);
+      closeEditPresensi();
+      if(ok){ toast('Presensi diperbarui'); renderRekap(); }
+    });
+    wrap.appendChild(b);
+  });
+  document.getElementById('editPresensiHapus').hidden = (status === '-');
+  document.getElementById('editPresensiOverlay').hidden = false;
+}
+function closeEditPresensi(){
+  document.getElementById('editPresensiOverlay').hidden = true;
+  editCtx = null;
+}
+document.getElementById('editPresensiBatal').addEventListener('click', closeEditPresensi);
+document.getElementById('editPresensiOverlay').addEventListener('click', (e)=>{
+  if(e.target.id === 'editPresensiOverlay') closeEditPresensi();
+});
+document.getElementById('editPresensiHapus').addEventListener('click', async ()=>{
+  if(!editCtx) return;
+  if(!confirm('Hapus data presensi siswa ini pada tanggal tersebut?')){ return; }
+  const { classId, siswaId, tanggal } = editCtx;
+  const ok = await dbDeleteAttendanceRecord(classId, siswaId, tanggal);
+  closeEditPresensi();
+  if(ok){ toast('Data presensi dihapus'); renderRekap(); }
+});
+
+// Klik pada sel tanggal (H/S/I/A/-) di tabel rekap -> buka dialog ubah/hapus.
+document.getElementById('rekapTableBody').addEventListener('click', (e)=>{
+  const cell = e.target.closest('.mark-cell');
+  if(!cell) return;
+  const classId = document.getElementById('rekapKelas').value;
+  openEditPresensi(classId, cell.dataset.siswa, cell.dataset.tanggal, cell.dataset.status);
+});
+
+// Klik tombol ✕ di header tanggal -> hapus semua presensi kelas ini pada tanggal itu.
+document.getElementById('rekapTableHead').addEventListener('click', async (e)=>{
+  const btn = e.target.closest('.date-del-btn');
+  if(!btn) return;
+  const classId = document.getElementById('rekapKelas').value;
+  if(!classId) return;
+  const tanggal = btn.dataset.tanggal;
+  if(!confirm(`Hapus SEMUA data presensi kelas ini pada tanggal ${formatIndoDateFromStr(tanggal)}? Tindakan ini tidak bisa dibatalkan.`)) return;
+  const ok = await dbDeleteAttendanceForDate(classId, tanggal);
+  if(ok){ toast('Data presensi tanggal tersebut dihapus'); renderRekap(); }
+});
 
 /* ============================ EXPORT CSV / EXCEL (per tanggal) ============================ */
 document.getElementById('btnUnduhCsv').addEventListener('click', async ()=>{
