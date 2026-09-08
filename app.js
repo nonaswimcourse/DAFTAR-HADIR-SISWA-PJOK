@@ -722,7 +722,8 @@ async function renderRekap(){
   lastRekapPayload = {
     classId,
     className: DATA.classes.find(k=>k.id===classId).nama,
-    range, dates, rowsData, classTotals, semesterMode, monthGroups
+    range, dates, rowsData, classTotals, semesterMode, monthGroups,
+    semesterJenis: semesterMode ? document.getElementById('semesterJenis').value : null
   };
 }
 
@@ -906,7 +907,7 @@ async function buildRekapPdfDoc(){
   doc.line(40, 101.5, pageWidth-40, 101.5);
 
   doc.setFont('helvetica','bold'); doc.setFontSize(12);
-  doc.text(p.semesterMode ? 'DAFTAR HADIR SEMESTER GANJIL PJOK' : 'DAFTAR REKAP PRESENSI PESERTA DIDIK', cx, 116, {align:'center'});
+  doc.text(p.semesterMode ? `DAFTAR HADIR SEMESTER ${(p.semesterJenis||'ganjil').toUpperCase()} PJOK` : 'DAFTAR REKAP PRESENSI PESERTA DIDIK', cx, 116, {align:'center'});
   doc.setFont('helvetica','normal'); doc.setFontSize(10);
   const periodeTxt = `Kelas: ${p.className}   |   Periode: ${formatIndoDateFromStr(p.range.start)} s.d. ${formatIndoDateFromStr(p.range.end)}`;
   doc.text(periodeTxt, cx, 131, {align:'center'});
