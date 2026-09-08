@@ -1182,7 +1182,14 @@ formLogin.addEventListener('submit', async (e)=>{
   try{
     const { error } = await sb.auth.signInWithPassword({ email, password });
     if(error){
-      loginError.textContent = 'Email atau kata sandi salah.';
+      console.error('Login error:', error);
+      if(/confirm/i.test(error.message)){
+        loginError.textContent = 'Email belum dikonfirmasi. Cek inbox/spam untuk link konfirmasi, atau minta admin mengonfirmasi akun di dashboard Supabase.';
+      }else if(/invalid login credentials/i.test(error.message)){
+        loginError.textContent = 'Email atau kata sandi salah. (' + error.message + ')';
+      }else{
+        loginError.textContent = 'Login gagal: ' + error.message;
+      }
     }
   }catch(err){
     loginError.textContent = 'Gagal terhubung ke server. Periksa koneksi internet Anda.';
