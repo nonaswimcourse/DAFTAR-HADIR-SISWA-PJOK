@@ -184,17 +184,34 @@
     <div class="card">
       <h2>Rekap Kehadiran</h2>
       <p class="muted">Rekap dihitung per-<b>tanggal</b> dari data presensi yang sudah disimpan. Setiap tanggal presensi tampil sebagai kolom sendiri (bukan cuma total H), lalu dijumlah di kolom Total &amp; %Hadir.</p>
+
+      <label class="field-label" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="rekapModeSemester" style="width:auto">
+        Rekap Semester Guru Mapel (1x pertemuan/minggu, dikelompokkan per bulan, s/d 6 bulan)
+      </label>
+
       <div class="grid2">
         <div>
           <label class="field-label">Kelas</label>
           <select id="rekapKelas"></select>
         </div>
-        <div>
+        <div id="rekapBulanWrap">
           <label class="field-label">Bulan Rekap</label>
           <input type="month" id="rekapBulan">
         </div>
+        <div id="semesterJenisWrap" hidden>
+          <label class="field-label">Semester</label>
+          <select id="semesterJenis">
+            <option value="ganjil">Ganjil (Juli - Desember)</option>
+            <option value="genap">Genap (Januari - Juni)</option>
+          </select>
+        </div>
+        <div id="semesterTahunWrap" hidden>
+          <label class="field-label">Tahun Ajaran Mulai</label>
+          <input type="number" id="semesterTahun" placeholder="mis. 2025" min="2000" max="2100">
+        </div>
       </div>
-      <div class="grid2">
+      <div class="grid2" id="rekapCustomRangeWrap">
         <div>
           <label class="field-label">Dari Tanggal (opsional, isi untuk rentang custom)</label>
           <input type="date" id="rekapDari">
@@ -204,13 +221,13 @@
           <input type="date" id="rekapSampai">
         </div>
       </div>
-      <p class="small-muted">Kosongkan "Dari/Sampai Tanggal" untuk memakai rekap 1 bulan penuh sesuai pilihan "Bulan Rekap" di atas.</p>
+      <p class="small-muted" id="rekapModeHint">Kosongkan "Dari/Sampai Tanggal" untuk memakai rekap 1 bulan penuh sesuai pilihan "Bulan Rekap" di atas.</p>
 
       <div class="stats" id="rekapStats"></div>
 
       <div class="table-wrap">
         <table id="rekapTable">
-          <thead><tr id="rekapTableHead"></tr></thead>
+          <thead id="rekapTableHead"></thead>
           <tbody id="rekapTableBody"></tbody>
         </table>
       </div>

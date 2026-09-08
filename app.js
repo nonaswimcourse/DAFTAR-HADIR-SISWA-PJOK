@@ -471,8 +471,42 @@ function currentMonthStr(){
   return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
 }
 document.getElementById('rekapBulan').value = currentMonthStr();
+document.getElementById('semesterTahun').value = new Date().getFullYear();
+
+// Toggle tampilan field: mode "Bulanan/Custom" biasa vs "Semester Guru Mapel"
+// (guru mapel/PJOK biasanya cuma masuk 1x/minggu, jadi rekapnya dibuat per-6-bulan
+// dan dikelompokkan per bulan, bukan per hari).
+function updateRekapModeUI(){
+  const semester = document.getElementById('rekapModeSemester').checked;
+  document.getElementById('rekapBulanWrap').hidden = semester;
+  document.getElementById('semesterJenisWrap').hidden = !semester;
+  document.getElementById('semesterTahunWrap').hidden = !semester;
+  document.getElementById('rekapCustomRangeWrap').hidden = semester;
+  document.getElementById('rekapModeHint').textContent = semester
+    ? 'Rekap akan mengambil semua data presensi pada rentang 6 bulan semester yang dipilih, dikelompokkan per bulan. Cocok untuk guru mapel yang hanya masuk 1x seminggu (±4 pertemuan/bulan).'
+    : 'Kosongkan "Dari/Sampai Tanggal" untuk memakai rekap 1 bulan penuh sesuai pilihan "Bulan Rekap" di atas.';
+}
+document.getElementById('rekapModeSemester').addEventListener('change', ()=>{ updateRekapModeUI(); renderRekap(); });
+document.getElementById('semesterJenis').addEventListener('change', renderRekap);
+document.getElementById('semesterTahun').addEventListener('change', renderRekap);
+updateRekapModeUI();
+
+function computeSemesterRange(jenis, tahunMulaiStr){
+  const y = parseInt(tahunMulaiStr, 10);
+  if(!y) return null;
+  if(jenis === 'genap'){
+    const y2 = y + 1;
+    return { start: `${y2}-01-01`, end: `${y2}-06-30` };
+  }
+  return { start: `${y}-07-01`, end: `${y}-12-31` };
+}
 
 function dateRangeFromInputs(){
+  if(document.getElementById('rekapModeSemester').checked){
+    const jenis = document.getElementById('semesterJenis').value;
+    const tahun = document.getElementById('semesterTahun').value;
+    return computeSemesterRange(jenis, tahun);
+  }
   const bulan = document.getElementById('rekapBulan').value; // yyyy-mm
   const dari = document.getElementById('rekapDari').value;
   const sampai = document.getElementById('rekapSampai').value;
@@ -492,6 +526,24 @@ function shortDate(d){
   return day+'/'+m;
 }
 
+// Nama bulan (dipakai juga oleh kop surat PDF, lihat bawah).
+const BULAN_ID = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+function monthLabelFromYm(ym){
+  const [y,m] = ym.split('-').map(Number);
+  return BULAN_ID[m-1] + ' ' + y;
+}
+// Mengelompokkan daftar tanggal (sudah terurut) menjadi grup per-bulan berurutan.
+function groupDatesByMonth(dates){
+  const groups = [];
+  dates.forEach(d=>{
+    const ym = d.slice(0,7);
+    let g = groups[groups.length-1];
+    if(!g || g.ym !== ym){ g = {ym, label: monthLabelFromYm(ym), dates: []}; groups.push(g); }
+    g.dates.push(d);
+  });
+  return groups;
+}
+
 let lastRekapPayload = null;
 
 async function renderRekap(){
@@ -506,8 +558,9 @@ async function renderRekap(){
   if(!classId){ emptyMsg.hidden=false; emptyMsg.textContent='Buat kelas terlebih dahulu.'; document.getElementById('rekapStats').innerHTML=''; return; }
 
   const range = dateRangeFromInputs();
-  if(!range){ emptyMsg.hidden=false; return; }
+  if(!range){ emptyMsg.hidden=false; emptyMsg.textContent = 'Lengkapi pilihan semester/tahun ajaran di atas.'; return; }
 
+  const semesterMode = document.getElementById('rekapModeSemester').checked;
   const byDate = await dbFetchAttendanceRange(classId, range.start, range.end);
   const dates = Object.keys(byDate).sort();
   const students = DATA.students.filter(s=>s.classId===classId).sort((a,b)=>a.nama.localeCompare(b.nama,'id'));
@@ -520,15 +573,32 @@ async function renderRekap(){
   }
   emptyMsg.hidden = true;
 
-  // header row: setiap tanggal presensi tampil sebagai kolomnya sendiri.
-  // PENTING: `head` di sini ADALAH elemen <tr id="rekapTableHead"> itu sendiri
-  // (bukan <thead>), jadi isinya harus di-set langsung lewat innerHTML —
-  // BUKAN dengan appendChild(<tr>) lain, karena <tr> di dalam <tr> adalah
-  // HTML tidak valid dan membuat browser "membetulkan" tabel secara otomatis
-  // sehingga kolom jadi berantakan/tidak sejajar.
-  head.innerHTML = '<th style="width:32px">No</th><th style="min-width:140px">Nama Siswa</th>' +
-    dates.map(d=>`<th style="width:52px"><div class="date-th"><span title="${formatIndoDateFromStr(d)}">${shortDate(d)}</span><button type="button" class="date-del-btn" data-tanggal="${d}" title="Hapus semua presensi tanggal ${formatIndoDateFromStr(d)}">✕</button></div></th>`).join('') +
-    '<th style="width:36px">H</th><th style="width:36px">S</th><th style="width:36px">I</th><th style="width:36px">A</th><th style="width:56px">%Hadir</th>';
+  const monthGroups = semesterMode ? groupDatesByMonth(dates) : null;
+
+  // header: mode biasa -> 1 baris (tanggal lengkap per kolom).
+  // mode semester guru mapel -> 2 baris: nama bulan (colspan) lalu tanggal pertemuan di bawahnya,
+  // karena guru mapel cuma masuk 1x/minggu jadi kolomnya otomatis cuma tanggal2 yang ada presensinya.
+  // PENTING: `head` sekarang elemen <thead>, isi dengan appendChild(<tr>) yang valid (bukan innerHTML
+  // berisi <tr> di dalam <tr> seperti sebelumnya, karena itu bikin browser "membetulkan" tabel sendiri).
+  function dateHeaderCell(d, extraStyle){
+    return `<th style="${extraStyle||'width:52px'}"><div class="date-th"><span title="${formatIndoDateFromStr(d)}">${semesterMode ? d.slice(8,10) : shortDate(d)}</span><button type="button" class="date-del-btn" data-tanggal="${d}" title="Hapus semua presensi tanggal ${formatIndoDateFromStr(d)}">✕</button></div></th>`;
+  }
+  if(semesterMode){
+    const row1 = document.createElement('tr');
+    row1.innerHTML = '<th rowspan="2" style="width:32px">No</th><th rowspan="2" style="min-width:140px">Nama Siswa</th>' +
+      monthGroups.map(g=>`<th colspan="${g.dates.length}">${g.label}</th>`).join('') +
+      '<th rowspan="2" style="width:36px">H</th><th rowspan="2" style="width:36px">S</th><th rowspan="2" style="width:36px">I</th><th rowspan="2" style="width:36px">A</th><th rowspan="2" style="width:56px">%Hadir</th>';
+    const row2 = document.createElement('tr');
+    row2.innerHTML = monthGroups.map(g=>g.dates.map(d=>dateHeaderCell(d,'width:36px')).join('')).join('');
+    head.appendChild(row1); head.appendChild(row2);
+  } else {
+    const row = document.createElement('tr');
+    row.innerHTML = '<th style="width:32px">No</th><th style="min-width:140px">Nama Siswa</th>' +
+      dates.map(d=>dateHeaderCell(d)).join('') +
+      '<th style="width:36px">H</th><th style="width:36px">S</th><th style="width:36px">I</th><th style="width:36px">A</th><th style="width:56px">%Hadir</th>';
+    head.appendChild(row);
+  }
+
 
   const classTotals = {H:0,S:0,I:0,A:0};
   const rowsData = [];
@@ -567,7 +637,7 @@ async function renderRekap(){
   lastRekapPayload = {
     classId,
     className: DATA.classes.find(k=>k.id===classId).nama,
-    range, dates, rowsData, classTotals
+    range, dates, rowsData, classTotals, semesterMode, monthGroups
   };
 }
 
@@ -649,6 +719,12 @@ document.getElementById('btnUnduhCsv').addEventListener('click', async ()=>{
   rows.push([`Rekap Presensi Kelas: ${p.className}`]);
   rows.push([`Periode: ${formatIndoDateFromStr(p.range.start)} s.d. ${formatIndoDateFromStr(p.range.end)}`]);
   rows.push([]);
+  if(p.semesterMode && p.monthGroups){
+    const bulanRow = ['','']; 
+    p.monthGroups.forEach(g=>{ bulanRow.push(g.label); for(let i=1;i<g.dates.length;i++) bulanRow.push(''); });
+    bulanRow.push('','','','','');
+    rows.push(bulanRow);
+  }
   rows.push(['No','Nama Siswa', ...p.dates.map(formatIndoDateFromStr), 'H','S','I','A','%Hadir']);
   p.rowsData.forEach(r=>{
     rows.push([r.no, r.nama, ...r.marks, r.H, r.S, r.I, r.A, r.pct+'%']);
@@ -677,7 +753,6 @@ function downloadBlob(blob, filename){
 }
 
 /* ============================ PDF EXPORT (kop surat resmi) ============================ */
-const BULAN_ID = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
 function formatIndoDate(dateObj){
   return dateObj.getDate() + ' ' + BULAN_ID[dateObj.getMonth()] + ' ' + dateObj.getFullYear();
 }
@@ -746,22 +821,38 @@ async function buildRekapPdfDoc(){
   doc.line(40, 101.5, pageWidth-40, 101.5);
 
   doc.setFont('helvetica','bold'); doc.setFontSize(12);
-  doc.text('DAFTAR REKAP PRESENSI PESERTA DIDIK', cx, 116, {align:'center'});
+  doc.text(p.semesterMode ? 'DAFTAR REKAP PRESENSI SEMESTER (GURU MAPEL)' : 'DAFTAR REKAP PRESENSI PESERTA DIDIK', cx, 116, {align:'center'});
   doc.setFont('helvetica','normal'); doc.setFontSize(10);
   const periodeTxt = `Kelas: ${p.className}   |   Periode: ${formatIndoDateFromStr(p.range.start)} s.d. ${formatIndoDateFromStr(p.range.end)}`;
   doc.text(periodeTxt, cx, 131, {align:'center'});
 
-  // Table
-  const head = [['No','Nama Siswa', ...p.dates.map(shortDate), 'H','S','I','A','%Hadir']];
+  // Table. Mode semester guru mapel -> header 2 baris (nama bulan lalu tanggal
+  // pertemuan mingguan di bawahnya), karena kolomnya bisa sampai ~24 pertemuan (6 bulan).
+  let head;
+  if(p.semesterMode && p.monthGroups){
+    head = [
+      [
+        {content:'No', rowSpan:2}, {content:'Nama Siswa', rowSpan:2},
+        ...p.monthGroups.map(g=>({content:g.label, colSpan:g.dates.length})),
+        {content:'H', rowSpan:2}, {content:'S', rowSpan:2}, {content:'I', rowSpan:2}, {content:'A', rowSpan:2}, {content:'%Hadir', rowSpan:2}
+      ],
+      p.monthGroups.flatMap(g=>g.dates.map(d=>d.slice(8,10)))
+    ];
+  } else {
+    head = [['No','Nama Siswa', ...p.dates.map(shortDate), 'H','S','I','A','%Hadir']];
+  }
   const rows = p.rowsData.map(r=>[r.no, r.nama, ...r.marks, r.H, r.S, r.I, r.A, r.pct+'%']);
   rows.push(['', 'REKAP KELAS', ...p.dates.map(()=>''), p.classTotals.H, p.classTotals.S, p.classTotals.I, p.classTotals.A, '']);
+
+  // Banyak kolom (rekap semester bisa ~24 pertemuan) -> kecilkan font supaya tetap muat 1 halaman lebar.
+  const fontSz = p.dates.length > 20 ? 6 : p.dates.length > 12 ? 7 : 7.5;
 
   doc.autoTable({
     startY: 142,
     head, body: rows,
-    styles:{fontSize:7.5, halign:'center', cellPadding:2.5, lineColor:[210,215,225], lineWidth:0.5},
+    styles:{fontSize:fontSz, halign:'center', cellPadding:2, lineColor:[210,215,225], lineWidth:0.5},
     headStyles:{fillColor:[13,44,102], textColor:255, fontStyle:'bold'},
-    columnStyles:{0:{cellWidth:22}, 1:{cellWidth:100, halign:'left'}},
+    columnStyles:{0:{cellWidth:20}, 1:{cellWidth:95, halign:'left'}},
     didParseCell: function(data){
       if(data.row.index === rows.length-1){
         data.cell.styles.fontStyle = 'bold';
