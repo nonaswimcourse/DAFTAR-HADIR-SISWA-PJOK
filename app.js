@@ -1145,4 +1145,62 @@ async function init(){
   loadSettingsForm();
   document.getElementById('schoolSubTitle').textContent = 'Presensi Peserta Didik';
 }
-init();
+
+/* ============================ AUTH (LOGIN) ============================ */
+const loginScreen = document.getElementById('loginScreen');
+const appShell = document.getElementById('appShell');
+const formLogin = document.getElementById('formLogin');
+const loginError = document.getElementById('loginError');
+const btnLoginSubmit = document.getElementById('btnLoginSubmit');
+const btnLogout = document.getElementById('btnLogout');
+
+let appInitialized = false;
+
+function showLogin(){
+  loginScreen.hidden = false;
+  appShell.hidden = true;
+}
+
+async function showApp(){
+  loginScreen.hidden = true;
+  appShell.hidden = false;
+  formLogin.reset();
+  loginError.textContent = '';
+  if(!appInitialized){
+    appInitialized = true;
+    await init();
+  }
+}
+
+formLogin.addEventListener('submit', async (e)=>{
+  e.preventDefault();
+  const email = document.getElementById('loginEmail').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  loginError.textContent = '';
+  btnLoginSubmit.disabled = true;
+  btnLoginSubmit.textContent = 'Memproses...';
+  try{
+    const { error } = await sb.auth.signInWithPassword({ email, password });
+    if(error){
+      loginError.textContent = 'Email atau kata sandi salah.';
+    }
+  }catch(err){
+    loginError.textContent = 'Gagal terhubung ke server. Periksa koneksi internet Anda.';
+  }finally{
+    btnLoginSubmit.disabled = false;
+    btnLoginSubmit.textContent = 'Masuk';
+  }
+});
+
+btnLogout.addEventListener('click', async ()=>{
+  await sb.auth.signOut();
+});
+
+sb.auth.onAuthStateChange((_event, session)=>{
+  if(session){ showApp(); } else { appInitialized = false; showLogin(); }
+});
+
+(async function bootstrapAuth(){
+  const { data } = await sb.auth.getSession();
+  if(data && data.session){ await showApp(); } else { showLogin(); }
+})();

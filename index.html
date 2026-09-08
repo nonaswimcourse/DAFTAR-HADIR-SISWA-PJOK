@@ -2,7 +2,8 @@
 <html lang="id">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#4f46e5">
 <title>Presensi Peserta Didik - SD Negeri Tanjung 03</title>
 <link rel="icon" type="image/png" href="logo.png">
 <link rel="stylesheet" href="style.css">
@@ -15,12 +16,34 @@
 </head>
 <body>
 
+<!-- ===================== LOGIN SCREEN ===================== -->
+<div class="login-screen" id="loginScreen">
+  <div class="login-card">
+    <img src="logo.png" alt="Logo Sekolah" class="login-logo">
+    <h1>Presensi Peserta Didik</h1>
+    <p class="muted">Masuk untuk mengelola data kehadiran</p>
+    <form id="formLogin">
+      <label class="field-label">Email</label>
+      <input type="email" id="loginEmail" placeholder="nama@sekolah.sch.id" required autocomplete="username">
+      <label class="field-label">Kata Sandi</label>
+      <input type="password" id="loginPassword" placeholder="Kata sandi" required autocomplete="current-password">
+      <button class="btn primary" type="submit" id="btnLoginSubmit">Masuk</button>
+      <p class="small-muted" id="loginError"></p>
+    </form>
+    <p class="login-foot">Hubungi admin sekolah jika belum memiliki akun.</p>
+  </div>
+</div>
+
+<!-- ===================== APP SHELL ===================== -->
+<div id="appShell" hidden>
+
 <header class="top">
   <img src="logo.png" alt="Logo Sekolah">
   <div class="titles">
     <h1 id="schoolNameTitle">SD NEGERI TANJUNG 03</h1>
     <p id="schoolSubTitle">Presensi Peserta Didik</p>
   </div>
+  <button class="btn sm logout-btn" id="btnLogout" type="button">Keluar</button>
 </header>
 
 <nav class="tabs">
@@ -259,6 +282,9 @@
   </section>
 
 </main>
+
+</div>
+<!-- /appShell -->
 
 <div class="toast" id="toast"></div>
 
