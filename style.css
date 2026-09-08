@@ -37,6 +37,7 @@ h1,h2,h3{font-family:'Plus Jakarta Sans','Inter',sans-serif}
     radial-gradient(900px 500px at 10% 0%, rgba(255,255,255,.15), transparent 60%),
     linear-gradient(135deg, var(--primary) 0%, #6d28d9 55%, var(--primary-dark) 100%);
 }
+.login-screen[hidden]{ display:none !important; }
 .login-card{
   background:var(--card); border-radius:22px; padding:36px 30px 30px;
   width:100%; max-width:380px; box-shadow:var(--shadow-lg);
