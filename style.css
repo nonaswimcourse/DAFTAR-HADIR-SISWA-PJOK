@@ -112,5 +112,5 @@ th{background:#eef1f8;color:var(--navy-dark);font-size:12px}
 .howto summary{cursor:pointer;font-weight:600;color:var(--navy-dark);font-size:13px}
 .howto ol{margin:10px 0 2px;padding-left:20px;font-size:12.5px;color:var(--ink);line-height:1.55}
 .howto code{background:#eef1f8;padding:1px 5px;border-radius:5px;font-size:11.5px}
-#gdriveStatus{font-weight:600;color:var(--muted)}
-#gdriveStatus.connected{color:var(--green)}
+#gdriveStatus,#gdriveStatusRekap{font-weight:600;color:var(--muted)}
+#gdriveStatus.connected,#gdriveStatusRekap.connected{color:var(--green)}

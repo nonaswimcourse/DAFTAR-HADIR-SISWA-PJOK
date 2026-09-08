@@ -216,27 +216,28 @@
       </div>
       <p class="empty" id="rekapEmptyMsg" hidden>Belum ada data presensi pada rentang ini.</p>
 
-      <div class="row" style="margin-top:16px;justify-content:flex-end;gap:8px">
+      <div class="row" style="margin-top:16px;justify-content:flex-end;gap:8px;flex-wrap:wrap">
         <button class="btn secondary" id="btnUnduhCsv" type="button">📑 Unduh Rekap Excel/CSV (per tanggal)</button>
         <button class="btn primary" id="btnUnduhPdf" type="button">📄 Unduh Rekap PDF</button>
+        <button class="btn primary" id="btnKirimPdfDrive" type="button">☁️ Kirim PDF ke Google Drive</button>
       </div>
+      <p class="small-muted" style="text-align:right;margin-top:6px" id="gdriveStatusRekap">Google Drive: belum terhubung</p>
     </div>
   </section>
 
   <!-- ===================== PAGE: BACKUP (Google Drive) ===================== -->
   <section id="backup" class="page">
     <div class="card">
-      <h2>Kirim ke Google Drive</h2>
-      <p class="muted">Semua data (kelas, siswa, presensi setiap tanggal) tersimpan otomatis di database Supabase — bukan lagi di peramban HP/laptop ini. Fitur di bawah ini hanya untuk mengirim salinan cadangan (JSON) atau PDF rekap terakhir ke folder Google Drive sekolah, sebagai lapisan cadangan tambahan.</p>
+      <h2>Google Drive</h2>
+      <p class="muted">Semua data (kelas, siswa, presensi setiap tanggal) tersimpan otomatis di database Supabase — bukan lagi di peramban HP/laptop ini. Halaman ini untuk menghubungkan akun Google Drive dan mengirim salinan cadangan (JSON) sebagai lapisan cadangan tambahan. Tombol untuk mengirim PDF rekap ke Drive kini ada langsung di tab "Rekap &amp; Cetak", di sebelah tombol "Unduh Rekap PDF" — dan tidak perlu mengunduh dahulu, PDF dibuat otomatis lalu langsung diunggah.</p>
       <div class="row" style="margin-top:10px">
         <button class="btn secondary sm" id="btnConnectDrive" type="button">🔗 Hubungkan Google Drive</button>
         <span class="small-muted" id="gdriveStatus">Belum terhubung</span>
       </div>
       <div class="row" style="margin-top:10px;gap:8px">
         <button class="btn primary sm" id="btnUploadJsonDrive" type="button">⬆️ Unggah Backup JSON ke Drive</button>
-        <button class="btn primary sm" id="btnUploadPdfDrive" type="button">⬆️ Unggah PDF Rekap Terakhir ke Drive</button>
       </div>
-      <p class="small-muted">Unggah PDF memakai file rekap terakhir yang dibuat di tab "Rekap &amp; Cetak" (klik "Unduh Rekap PDF" dahulu di tab tersebut). File akan masuk ke folder Google Drive yang sudah ditentukan di <code>config.js</code>.</p>
+      <p class="small-muted">File akan masuk ke folder Google Drive yang sudah ditentukan di <code>config.js</code>.</p>
     </div>
   </section>
 

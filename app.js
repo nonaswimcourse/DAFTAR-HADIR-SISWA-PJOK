@@ -705,12 +705,12 @@ function getImageDataUrl(src){
   });
 }
 
-let lastPdfDoc = null;
-let lastPdfFilename = null;
-
-document.getElementById('btnUnduhPdf').addEventListener('click', async ()=>{
+// Membuat dokumen PDF rekap dari data terbaru. Dipakai baik oleh tombol "Unduh"
+// maupun tombol "Kirim ke Google Drive" secara independen — masing-masing membuat
+// PDF-nya sendiri, tidak saling bergantung.
+async function buildRekapPdfDoc(){
   await renderRekap();
-  if(!lastRekapPayload){ toast('Tidak ada data untuk dicetak'); return; }
+  if(!lastRekapPayload){ toast('Tidak ada data untuk dicetak'); return null; }
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({orientation:'landscape', unit:'pt', format:'a4'});
   const pageWidth = doc.internal.pageSize.getWidth();
@@ -797,9 +797,13 @@ document.getElementById('btnUnduhPdf').addEventListener('click', async ()=>{
   doc.text(`NIP. ${s.nip || ''}`, signX, signY+85, {align:'left'});
 
   const fname = `Rekap_Presensi_${p.className.replace(/\s+/g,'_')}_${p.range.start}_sd_${p.range.end}.pdf`;
-  doc.save(fname);
-  lastPdfDoc = doc;
-  lastPdfFilename = fname;
+  return { doc, fname };
+}
+
+document.getElementById('btnUnduhPdf').addEventListener('click', async ()=>{
+  const built = await buildRekapPdfDoc();
+  if(!built) return;
+  built.doc.save(built.fname);
   toast('PDF berhasil diunduh');
 });
 
@@ -807,32 +811,59 @@ document.getElementById('btnUnduhPdf').addEventListener('click', async ()=>{
 let gdriveToken = null;
 let gdriveTokenClient = null;
 
-document.getElementById('btnConnectDrive').addEventListener('click', ()=>{
-  if(!GOOGLE_CLIENT_ID){ toast('GOOGLE_CLIENT_ID belum diisi di config.js'); return; }
-  if(typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2){
-    toast('Layanan Google belum siap. Pastikan aplikasi diakses via http/https dan koneksi internet aktif.');
-    return;
-  }
-  try{
-    gdriveTokenClient = google.accounts.oauth2.initTokenClient({
-      client_id: GOOGLE_CLIENT_ID,
-      scope: 'https://www.googleapis.com/auth/drive.file',
-      callback: (resp)=>{
-        if(resp.error){
-          toast('Gagal menghubungkan Google Drive: ' + resp.error);
-          return;
+function setGdriveStatus(text, connected){
+  ['gdriveStatus','gdriveStatusRekap'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(!el) return;
+    el.textContent = id === 'gdriveStatusRekap' ? ('Google Drive: ' + text) : text;
+    el.classList.toggle('connected', !!connected);
+  });
+}
+
+// Meminta izin/token Google jika belum terhubung, mengembalikan Promise yang
+// selesai begitu token didapat. Dipakai oleh tombol "Hubungkan Google Drive"
+// maupun otomatis oleh tombol-tombol unggah supaya tidak perlu 2 langkah manual.
+function ensureDriveConnected(){
+  return new Promise((resolve, reject)=>{
+    if(gdriveToken){ resolve(gdriveToken); return; }
+    if(!GOOGLE_CLIENT_ID){ toast('GOOGLE_CLIENT_ID belum diisi di config.js'); reject(new Error('no client id')); return; }
+    if(typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2){
+      toast('Layanan Google belum siap. Pastikan aplikasi diakses via http/https dan koneksi internet aktif.');
+      reject(new Error('google sdk not ready'));
+      return;
+    }
+    try{
+      gdriveTokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: GOOGLE_CLIENT_ID,
+        // Catatan: scope penuh "drive" (bukan "drive.file") dipakai karena kita
+        // mengunggah ke folder ID yang sudah ada (ditentukan manual di config.js),
+        // bukan folder yang dibuat/dipilih lewat aplikasi ini. Dengan scope
+        // "drive.file" saja, Google akan menolak permintaan menaruh file ke folder
+        // yang belum pernah "dibuka" lewat aplikasi -> ini penyebab paling umum
+        // upload gagal walau sudah "Terhubung".
+        scope: 'https://www.googleapis.com/auth/drive',
+        callback: (resp)=>{
+          if(resp.error){
+            toast('Gagal menghubungkan Google Drive: ' + resp.error);
+            reject(new Error(resp.error));
+            return;
+          }
+          gdriveToken = resp.access_token;
+          setGdriveStatus('Terhubung ✔', true);
+          toast('Berhasil terhubung ke Google Drive');
+          resolve(gdriveToken);
         }
-        gdriveToken = resp.access_token;
-        const statusEl = document.getElementById('gdriveStatus');
-        statusEl.textContent = 'Terhubung ✔';
-        statusEl.classList.add('connected');
-        toast('Berhasil terhubung ke Google Drive');
-      }
-    });
-    gdriveTokenClient.requestAccessToken();
-  }catch(err){
-    toast('Gagal memulai koneksi Google. Periksa GOOGLE_CLIENT_ID & pengaturan origin di Google Cloud Console.');
-  }
+      });
+      gdriveTokenClient.requestAccessToken();
+    }catch(err){
+      toast('Gagal memulai koneksi Google. Periksa GOOGLE_CLIENT_ID & pengaturan origin di Google Cloud Console.');
+      reject(err);
+    }
+  });
+}
+
+document.getElementById('btnConnectDrive').addEventListener('click', ()=>{
+  ensureDriveConnected().catch(()=>{});
 });
 
 async function uploadToDrive(filename, mimeType, dataStr, isBase64){
@@ -892,6 +923,7 @@ async function buildFullBackupJson(){
 
 document.getElementById('btnUploadJsonDrive').addEventListener('click', async ()=>{
   try{
+    await ensureDriveConnected();
     toast('Menyiapkan data & mengunggah backup ke Google Drive...');
     const backup = await buildFullBackupJson();
     const json = JSON.stringify(backup, null, 2);
@@ -900,20 +932,27 @@ document.getElementById('btnUploadJsonDrive').addEventListener('click', async ()
     const result = await uploadToDrive(fname, 'application/json', json, false);
     if(result) toast('Backup JSON berhasil diunggah ke Google Drive');
   }catch(err){
-    toast('Gagal mengunggah: ' + err.message);
+    if(err && err.message !== 'no client id' && err.message !== 'google sdk not ready') toast('Gagal mengunggah: ' + err.message);
   }
 });
 
-document.getElementById('btnUploadPdfDrive').addEventListener('click', async ()=>{
-  if(!lastPdfDoc){ toast('Buat dahulu PDF-nya di tab "Rekap & Cetak"'); return; }
+// Tombol "Kirim PDF ke Google Drive" di tab Rekap & Cetak — berdiri sendiri,
+// TIDAK butuh tombol "Unduh Rekap PDF" diklik lebih dulu. PDF dibuat ulang di sini,
+// dan jika belum terhubung ke Google, alur hubungkan-Google dijalankan dulu secara
+// otomatis sebelum mengunggah.
+document.getElementById('btnKirimPdfDrive').addEventListener('click', async ()=>{
   try{
+    await ensureDriveConnected();
+    toast('Membuat PDF rekap...');
+    const built = await buildRekapPdfDoc();
+    if(!built) return;
     toast('Mengunggah PDF ke Google Drive...');
-    const dataUri = lastPdfDoc.output('datauristring');
+    const dataUri = built.doc.output('datauristring');
     const base64 = dataUri.split(',')[1];
-    const result = await uploadToDrive(lastPdfFilename || 'Rekap_Presensi.pdf', 'application/pdf', base64, true);
+    const result = await uploadToDrive(built.fname, 'application/pdf', base64, true);
     if(result) toast('PDF rekap berhasil diunggah ke Google Drive');
   }catch(err){
-    toast('Gagal mengunggah: ' + err.message);
+    if(err && err.message !== 'no client id' && err.message !== 'google sdk not ready') toast('Gagal mengunggah: ' + err.message);
   }
 });
 
