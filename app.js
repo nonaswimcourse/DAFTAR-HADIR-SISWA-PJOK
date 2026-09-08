@@ -70,6 +70,13 @@ async function dbDeleteKelas(id){
   delete DATA.attendance[id];
   return true;
 }
+async function dbUpdateKelasNama(id, nama){
+  const { error } = await sb.from('kelas').update({ nama }).eq('id', id);
+  if(error){ dbErr('mengubah nama kelas', error); return false; }
+  const k = DATA.classes.find(x=>x.id===id);
+  if(k) k.nama = nama;
+  return true;
+}
 
 /* --------- SISWA --------- */
 async function dbFetchSiswa(){
@@ -94,6 +101,13 @@ async function dbDeleteSiswa(id){
   Object.values(DATA.attendance).forEach(byDate=>{
     Object.values(byDate).forEach(rec=>{ delete rec[id]; });
   });
+  return true;
+}
+async function dbUpdateSiswaNama(id, nama){
+  const { error } = await sb.from('siswa').update({ nama }).eq('id', id);
+  if(error){ dbErr('mengubah nama siswa', error); return false; }
+  const s = DATA.students.find(x=>x.id===id);
+  if(s) s.nama = nama;
   return true;
 }
 
@@ -233,12 +247,24 @@ function renderKelasChips(){
   DATA.classes.forEach(k=>{
     const chip = document.createElement('div');
     chip.className = 'chip' + (k.id===kelasAktifId ? ' active' : '');
-    chip.innerHTML = `<span>${escapeHtml(k.nama)}</span><span class="del" data-del="${k.id}">✕</span>`;
+    chip.innerHTML = `<span>${escapeHtml(k.nama)}</span><span class="edit" data-edit="${k.id}" title="Ubah nama kelas">✎</span><span class="del" data-del="${k.id}" title="Hapus kelas">✕</span>`;
     chip.addEventListener('click', (e)=>{
-      if(e.target.dataset.del) return;
+      if(e.target.dataset.del || e.target.dataset.edit) return;
       kelasAktifId = k.id;
       renderKelasChips();
       renderSiswaList();
+    });
+    chip.querySelector('.edit').addEventListener('click', async (e)=>{
+      e.stopPropagation();
+      const baru = prompt('Ubah nama kelas:', k.nama);
+      if(baru === null) return; // dibatalkan
+      const trimmed = baru.trim();
+      if(!trimmed || trimmed === k.nama) return;
+      const ok = await dbUpdateKelasNama(k.id, trimmed);
+      if(!ok) return;
+      renderKelasChips();
+      refreshKelasSelects();
+      toast('Nama kelas diperbarui');
     });
     chip.querySelector('.del').addEventListener('click', async (e)=>{
       e.stopPropagation();
@@ -285,8 +311,8 @@ function renderSiswaList(){
   emptyMsg.textContent = 'Belum ada siswa di kelas ini.';
   list.forEach((s,i)=>{
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${i+1}</td><td>${escapeHtml(s.nama)}</td>
-      <td><button class="btn danger sm" data-del="${s.id}">Hapus</button></td>`;
+    tr.innerHTML = `<td>${i+1}</td><td class="siswa-nama-cell">${escapeHtml(s.nama)}</td>
+      <td style="white-space:nowrap"><button class="btn secondary sm" data-edit="${s.id}">Edit</button> <button class="btn danger sm" data-del="${s.id}">Hapus</button></td>`;
     tr.querySelector('[data-del]').addEventListener('click', async ()=>{
       if(confirm(`Hapus siswa "${s.nama}"?`)){
         const ok = await dbDeleteSiswa(s.id);
@@ -294,6 +320,39 @@ function renderSiswaList(){
         renderSiswaList();
         toast('Siswa dihapus');
       }
+    });
+    tr.querySelector('[data-edit]').addEventListener('click', ()=>{
+      const namaCell = tr.querySelector('.siswa-nama-cell');
+      const oldNama = s.nama;
+      namaCell.innerHTML = '';
+      const inputEdit = document.createElement('input');
+      inputEdit.type = 'text';
+      inputEdit.value = oldNama;
+      inputEdit.style.width = '100%';
+      const btnRow = document.createElement('div');
+      btnRow.className = 'row';
+      btnRow.style.cssText = 'margin-top:6px;gap:6px';
+      const btnSave = document.createElement('button');
+      btnSave.type = 'button'; btnSave.className = 'btn primary sm'; btnSave.textContent = 'Simpan';
+      const btnCancel = document.createElement('button');
+      btnCancel.type = 'button'; btnCancel.className = 'btn secondary sm'; btnCancel.textContent = 'Batal';
+      btnRow.appendChild(btnSave); btnRow.appendChild(btnCancel);
+      namaCell.appendChild(inputEdit); namaCell.appendChild(btnRow);
+      inputEdit.focus(); inputEdit.select();
+      btnCancel.addEventListener('click', renderSiswaList);
+      inputEdit.addEventListener('keydown', (e)=>{
+        if(e.key === 'Escape') renderSiswaList();
+        if(e.key === 'Enter'){ e.preventDefault(); btnSave.click(); }
+      });
+      btnSave.addEventListener('click', async ()=>{
+        const baru = inputEdit.value.trim();
+        if(!baru){ toast('Nama tidak boleh kosong'); return; }
+        if(baru === oldNama){ renderSiswaList(); return; }
+        const ok = await dbUpdateSiswaNama(s.id, baru);
+        if(!ok) return;
+        renderSiswaList();
+        toast('Nama siswa diperbarui');
+      });
     });
     tbody.appendChild(tr);
   });

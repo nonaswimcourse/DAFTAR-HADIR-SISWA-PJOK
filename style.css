@@ -42,6 +42,9 @@ button{cursor:pointer;font-family:inherit}
 .chip.active{background:var(--navy);color:#fff;border-color:var(--navy)}
 .chip .del{opacity:.6;font-weight:400}
 .chip .del:hover{opacity:1;color:var(--red)}
+.chip .edit{opacity:.6;font-weight:400}
+.chip .edit:hover{opacity:1}
+.chip.active .edit:hover, .chip.active .del:hover{color:#fff;opacity:1;text-decoration:underline}
 table{width:100%;border-collapse:collapse;font-size:13px}
 th,td{border:1px solid var(--line);padding:7px 8px;text-align:left}
 th{background:#eef1f8;color:var(--navy-dark);font-size:12px}
