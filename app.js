@@ -1,23 +1,39 @@
 /* ============================ DATA LAYER ============================ */
 const STORAGE_KEY = "presensiSiswaData_v1";
 
+function defaultSettings(){
+  return {
+    pemerintah: "PEMERINTAH KABUPATEN BREBES",
+    dinas: "DINAS PENDIDIKAN PEMUDA DAN OLAHRAGA",
+    korwilcam: "KORWILCAM SATPENDIK KECAMATAN TANJUNG",
+    namaSekolah: "SD NEGERI TANJUNG 03",
+    alamat: "Alamat : Jl. Cendrawasih No. 54, Tanjung, Kec.Tanjung, Kab. Brebes, Prov.Jawa Tengah 52254",
+    tempat: "Tanjung",
+    mapel: "Guru Penjasorkes",
+    namaGuru: "Wahyu Riski Maulana, S.Pd.,Gr.",
+    nip: "199608032022211003",
+    googleClientId: ""
+  };
+}
+
 function loadData(){
   try{
     const raw = localStorage.getItem(STORAGE_KEY);
-    if(raw) return JSON.parse(raw);
+    if(raw){
+      const parsed = JSON.parse(raw);
+      // migrasi: lengkapi field pengaturan baru jika belum ada (data lama)
+      parsed.settings = Object.assign(defaultSettings(), parsed.settings || {});
+      if(!parsed.attendance) parsed.attendance = {};
+      if(!parsed.classes) parsed.classes = [];
+      if(!parsed.students) parsed.students = [];
+      return parsed;
+    }
   }catch(e){}
   return {
     classes: [],
     students: [],
     attendance: {},
-    settings: {
-      namaSekolah: "SD NEGERI TANJUNG 03",
-      kabupaten: "KAB. BREBES",
-      tempat: "Tanjung",
-      mapel: "Guru Penjasorkes",
-      namaGuru: "Wahyu Riski Maulana, S.Pd.,Gr.",
-      nip: "199608032022211003"
-    }
+    settings: defaultSettings()
   };
 }
 let DATA = loadData();
@@ -263,19 +279,35 @@ document.getElementById('btnSemuaHadir').addEventListener('click', ()=>{
 document.getElementById('btnSimpanPresensi').addEventListener('click', ()=>{
   const classId = document.getElementById('presensiKelas').value;
   if(!classId){ toast('Pilih kelas terlebih dahulu'); return; }
+  const date = document.getElementById('presensiTanggal').value || todayStr();
   saveData();
-  toast('Presensi tersimpan');
+  toast(`Presensi tanggal ${formatIndoDateFromStr(date)} tersimpan`);
 });
+
+/* ============================ KOP SURAT (PREVIEW) ============================ */
+function renderKopPreview(){
+  const s = DATA.settings;
+  document.getElementById('kopPemerintahEl').textContent = s.pemerintah;
+  document.getElementById('kopDinasEl').textContent = s.dinas;
+  document.getElementById('kopKorwilcamEl').textContent = s.korwilcam;
+  document.getElementById('kopSekolahEl').textContent = s.namaSekolah;
+  document.getElementById('kopAlamatEl').textContent = s.alamat;
+  document.getElementById('schoolNameTitle').textContent = s.namaSekolah;
+}
 
 /* ============================ SETTINGS ============================ */
 function loadSettingsForm(){
   const s = DATA.settings;
+  document.getElementById('setPemerintah').value = s.pemerintah || '';
+  document.getElementById('setDinas').value = s.dinas || '';
+  document.getElementById('setKorwilcam').value = s.korwilcam || '';
   document.getElementById('setNamaSekolah').value = s.namaSekolah || '';
-  document.getElementById('setKabupaten').value = s.kabupaten || '';
+  document.getElementById('setAlamat').value = s.alamat || '';
   document.getElementById('setTempat').value = s.tempat || '';
   document.getElementById('setMapel').value = s.mapel || '';
   document.getElementById('setNamaGuru').value = s.namaGuru || '';
   document.getElementById('setNip').value = s.nip || '';
+  document.getElementById('setGoogleClientId').value = s.googleClientId || '';
 }
 loadSettingsForm();
 
@@ -286,21 +318,24 @@ document.getElementById('toggleSettingsRow').addEventListener('click', ()=>{
 });
 
 document.getElementById('btnSimpanSettings').addEventListener('click', ()=>{
-  DATA.settings = {
-    namaSekolah: document.getElementById('setNamaSekolah').value.trim() || 'SD NEGERI TANJUNG 03',
-    kabupaten: document.getElementById('setKabupaten').value.trim() || 'KAB. BREBES',
+  DATA.settings = Object.assign({}, DATA.settings, {
+    pemerintah: document.getElementById('setPemerintah').value.trim() || defaultSettings().pemerintah,
+    dinas: document.getElementById('setDinas').value.trim() || defaultSettings().dinas,
+    korwilcam: document.getElementById('setKorwilcam').value.trim() || defaultSettings().korwilcam,
+    namaSekolah: document.getElementById('setNamaSekolah').value.trim() || defaultSettings().namaSekolah,
+    alamat: document.getElementById('setAlamat').value.trim() || defaultSettings().alamat,
     tempat: document.getElementById('setTempat').value.trim() || 'Tanjung',
     mapel: document.getElementById('setMapel').value.trim() || 'Guru Penjasorkes',
     namaGuru: document.getElementById('setNamaGuru').value.trim(),
     nip: document.getElementById('setNip').value.trim()
-  };
+  });
   saveData();
-  document.getElementById('schoolNameTitle').textContent = DATA.settings.namaSekolah;
-  document.getElementById('schoolSubTitle').textContent = DATA.settings.kabupaten + ' · Presensi Peserta Didik';
+  renderKopPreview();
+  document.getElementById('schoolSubTitle').textContent = 'Presensi Peserta Didik';
   toast('Pengaturan disimpan');
 });
 
-/* ============================ REKAP ============================ */
+/* ============================ REKAP (PER TANGGAL) ============================ */
 function currentMonthStr(){
   const d = new Date();
   return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
@@ -322,6 +357,7 @@ function dateRangeFromInputs(){
   return null;
 }
 
+// Semua tanggal presensi yang benar-benar tersimpan (bukan cuma total), diurutkan kronologis
 function getSortedDatesInRange(classId, start, end){
   const rec = DATA.attendance[classId] || {};
   return Object.keys(rec).filter(d=> d>=start && d<=end).sort();
@@ -359,10 +395,10 @@ function renderRekap(){
   }
   emptyMsg.hidden = true;
 
-  // header row
+  // header row: setiap tanggal presensi tampil sebagai kolomnya sendiri
   const trh = document.createElement('tr');
   trh.innerHTML = '<th style="width:32px">No</th><th style="min-width:140px">Nama Siswa</th>' +
-    dates.map(d=>`<th style="width:40px">${shortDate(d)}</th>`).join('') +
+    dates.map(d=>`<th style="width:40px" title="${formatIndoDateFromStr(d)}">${shortDate(d)}</th>`).join('') +
     '<th style="width:40px">H</th><th style="width:40px">S</th><th style="width:40px">I</th><th style="width:40px">A</th><th style="width:50px">%Hadir</th>';
   head.appendChild(trh);
 
@@ -409,7 +445,45 @@ document.getElementById('rekapBulan').addEventListener('change', renderRekap);
 document.getElementById('rekapDari').addEventListener('change', renderRekap);
 document.getElementById('rekapSampai').addEventListener('change', renderRekap);
 
-/* ============================ PDF EXPORT ============================ */
+/* ============================ EXPORT CSV / EXCEL (per tanggal) ============================ */
+document.getElementById('btnUnduhCsv').addEventListener('click', ()=>{
+  renderRekap();
+  if(!lastRekapPayload){ toast('Tidak ada data untuk diunduh'); return; }
+  const p = lastRekapPayload;
+  const s = DATA.settings;
+  const rows = [];
+  rows.push([s.namaSekolah]);
+  rows.push([`Rekap Presensi Kelas: ${p.className}`]);
+  rows.push([`Periode: ${formatIndoDateFromStr(p.range.start)} s.d. ${formatIndoDateFromStr(p.range.end)}`]);
+  rows.push([]);
+  rows.push(['No','Nama Siswa', ...p.dates.map(formatIndoDateFromStr), 'H','S','I','A','%Hadir']);
+  p.rowsData.forEach(r=>{
+    rows.push([r.no, r.nama, ...r.marks, r.H, r.S, r.I, r.A, r.pct+'%']);
+  });
+  rows.push(['','REKAP KELAS', ...p.dates.map(()=>''), p.classTotals.H, p.classTotals.S, p.classTotals.I, p.classTotals.A, '']);
+
+  const csv = rows.map(r=>r.map(csvEscape).join(',')).join('\r\n');
+  const blob = new Blob(['\uFEFF'+csv], {type:'text/csv;charset=utf-8;'});
+  const fname = `Rekap_Presensi_${p.className.replace(/\s+/g,'_')}_${p.range.start}_sd_${p.range.end}.csv`;
+  downloadBlob(blob, fname);
+  toast('Rekap CSV/Excel berhasil diunduh');
+});
+
+function csvEscape(v){
+  const str = String(v ?? '');
+  if(/[",\r\n]/.test(str)) return '"' + str.replace(/"/g,'""') + '"';
+  return str;
+}
+
+function downloadBlob(blob, filename){
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 4000);
+}
+
+/* ============================ PDF EXPORT (kop surat resmi) ============================ */
 const BULAN_ID = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
 function formatIndoDate(dateObj){
   return dateObj.getDate() + ' ' + BULAN_ID[dateObj.getMonth()] + ' ' + dateObj.getFullYear();
@@ -419,8 +493,8 @@ function formatIndoDateFromStr(str){
   return d + ' ' + BULAN_ID[m-1] + ' ' + y;
 }
 
-/* Load logo as data URL for embedding into the PDF (canvas fetch of logo.png) */
-function getLogoDataUrl(){
+/* Load a logo image as data URL for embedding into the PDF (canvas fetch) */
+function getImageDataUrl(src){
   return new Promise((resolve)=>{
     const img = new Image();
     img.crossOrigin = 'anonymous';
@@ -434,9 +508,12 @@ function getLogoDataUrl(){
       }catch(e){ resolve(null); }
     };
     img.onerror = function(){ resolve(null); };
-    img.src = 'logo.png';
+    img.src = src;
   });
 }
+
+let lastPdfDoc = null;
+let lastPdfFilename = null;
 
 document.getElementById('btnUnduhPdf').addEventListener('click', async ()=>{
   renderRekap();
@@ -446,23 +523,40 @@ document.getElementById('btnUnduhPdf').addEventListener('click', async ()=>{
   const pageWidth = doc.internal.pageSize.getWidth();
   const s = DATA.settings;
   const p = lastRekapPayload;
-  const logoDataUrl = await getLogoDataUrl();
+  const [logoBrebesUrl, logoSekolahUrl] = await Promise.all([
+    getImageDataUrl('logo-brebes.png'),
+    getImageDataUrl('logo.png')
+  ]);
 
-  // Header / kop surat
-  if(logoDataUrl){
-    try{ doc.addImage(logoDataUrl, 'PNG', 40, 24, 50, 50); }catch(e){}
+  // ===== KOP SURAT RESMI (Logo Brebes kiri / teks tengah / Logo Sekolah kanan + garis ganda) =====
+  if(logoBrebesUrl){
+    try{ doc.addImage(logoBrebesUrl, 'PNG', 40, 20, 56, 56); }catch(e){}
   }
-  doc.setFont('helvetica','bold'); doc.setFontSize(14);
-  doc.text(s.namaSekolah || 'SD NEGERI TANJUNG 03', pageWidth/2, 38, {align:'center'});
-  doc.setFontSize(11); doc.setFont('helvetica','normal');
-  doc.text(s.kabupaten || 'KAB. BREBES', pageWidth/2, 54, {align:'center'});
+  if(logoSekolahUrl){
+    try{ doc.addImage(logoSekolahUrl, 'PNG', pageWidth-96, 20, 56, 56); }catch(e){}
+  }
+  const cx = pageWidth/2;
+  doc.setFont('helvetica','bold'); doc.setFontSize(13);
+  doc.text(s.pemerintah || 'PEMERINTAH KABUPATEN BREBES', cx, 30, {align:'center'});
+  doc.setFontSize(12);
+  doc.text(s.dinas || 'DINAS PENDIDIKAN PEMUDA DAN OLAHRAGA', cx, 44, {align:'center'});
+  doc.text(s.korwilcam || 'KORWILCAM SATPENDIK KECAMATAN TANJUNG', cx, 58, {align:'center'});
+  doc.setFontSize(17);
+  doc.text(s.namaSekolah || 'SD NEGERI TANJUNG 03', cx, 76, {align:'center'});
+  doc.setFont('helvetica','bolditalic'); doc.setFontSize(9.5);
+  doc.text(s.alamat || 'Alamat : Jl. Cendrawasih No. 54, Tanjung, Kec.Tanjung, Kab. Brebes, Prov.Jawa Tengah 52254', cx, 89, {align:'center'});
+
+  // garis ganda kop surat (tebal lalu tipis)
+  doc.setLineWidth(1.6);
+  doc.line(40, 98, pageWidth-40, 98);
+  doc.setLineWidth(0.7);
+  doc.line(40, 101.5, pageWidth-40, 101.5);
+
   doc.setFont('helvetica','bold'); doc.setFontSize(12);
-  doc.text('DAFTAR REKAP PRESENSI PESERTA DIDIK', pageWidth/2, 72, {align:'center'});
+  doc.text('DAFTAR REKAP PRESENSI PESERTA DIDIK', cx, 116, {align:'center'});
   doc.setFont('helvetica','normal'); doc.setFontSize(10);
   const periodeTxt = `Kelas: ${p.className}   |   Periode: ${formatIndoDateFromStr(p.range.start)} s.d. ${formatIndoDateFromStr(p.range.end)}`;
-  doc.text(periodeTxt, pageWidth/2, 87, {align:'center'});
-  doc.setLineWidth(1.2);
-  doc.line(40, 96, pageWidth-40, 96);
+  doc.text(periodeTxt, cx, 131, {align:'center'});
 
   // Table
   const head = [['No','Nama Siswa', ...p.dates.map(shortDate), 'H','S','I','A','%Hadir']];
@@ -470,7 +564,7 @@ document.getElementById('btnUnduhPdf').addEventListener('click', async ()=>{
   rows.push(['', 'REKAP KELAS', ...p.dates.map(()=>''), p.classTotals.H, p.classTotals.S, p.classTotals.I, p.classTotals.A, '']);
 
   doc.autoTable({
-    startY: 104,
+    startY: 142,
     head, body: rows,
     styles:{fontSize:7.5, halign:'center', cellPadding:2.5, lineColor:[210,215,225], lineWidth:0.5},
     headStyles:{fillColor:[13,44,102], textColor:255, fontStyle:'bold'},
@@ -511,7 +605,146 @@ document.getElementById('btnUnduhPdf').addEventListener('click', async ()=>{
 
   const fname = `Rekap_Presensi_${p.className.replace(/\s+/g,'_')}_${p.range.start}_sd_${p.range.end}.pdf`;
   doc.save(fname);
+  lastPdfDoc = doc;
+  lastPdfFilename = fname;
   toast('PDF berhasil diunduh');
+});
+
+/* ============================ BACKUP: DOWNLOAD / RESTORE (JSON) ============================ */
+document.getElementById('btnDownloadBackup').addEventListener('click', ()=>{
+  const json = JSON.stringify(DATA, null, 2);
+  const blob = new Blob([json], {type:'application/json'});
+  const stamp = todayStr();
+  downloadBlob(blob, `Backup_Presensi_${(DATA.settings.namaSekolah||'Sekolah').replace(/\s+/g,'_')}_${stamp}.json`);
+  toast('Backup JSON diunduh. Unggah file ini ke Google Drive Anda.');
+});
+
+document.getElementById('inputRestoreBackup').addEventListener('change', (e)=>{
+  const file = e.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = ()=>{
+    try{
+      const parsed = JSON.parse(reader.result);
+      if(!parsed.classes || !parsed.students || !parsed.attendance){
+        toast('File backup tidak valid'); return;
+      }
+      if(!confirm('Memulihkan backup akan menimpa data yang ada saat ini di aplikasi. Lanjutkan?')) return;
+      parsed.settings = Object.assign(defaultSettings(), parsed.settings || {});
+      DATA = parsed;
+      saveData();
+      kelasAktifId = null;
+      renderKelasChips(); renderSiswaList(); refreshKelasSelects();
+      renderPresensi(); renderRekap(); loadSettingsForm(); renderKopPreview();
+      toast('Data berhasil dipulihkan dari backup');
+    }catch(err){
+      toast('Gagal membaca file backup');
+    }
+    e.target.value = '';
+  };
+  reader.readAsText(file);
+});
+
+/* ============================ GOOGLE DRIVE (opsional) ============================ */
+let gdriveToken = null;
+let gdriveTokenClient = null;
+
+document.getElementById('toggleGdriveRow').addEventListener('click', ()=>{
+  const box = document.getElementById('gdriveBox');
+  box.hidden = !box.hidden;
+  document.getElementById('gdriveChevron').textContent = box.hidden ? 'Buka ▾' : 'Tutup ▴';
+});
+
+document.getElementById('btnSimpanClientId').addEventListener('click', ()=>{
+  DATA.settings.googleClientId = document.getElementById('setGoogleClientId').value.trim();
+  saveData();
+  toast('Google Client ID disimpan');
+});
+
+document.getElementById('btnConnectDrive').addEventListener('click', ()=>{
+  const clientId = (document.getElementById('setGoogleClientId').value || DATA.settings.googleClientId || '').trim();
+  if(!clientId){ toast('Isi & simpan Google Client ID terlebih dahulu'); return; }
+  if(typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2){
+    toast('Layanan Google belum siap. Pastikan aplikasi diakses via http/https dan koneksi internet aktif.');
+    return;
+  }
+  DATA.settings.googleClientId = clientId;
+  saveData();
+  try{
+    gdriveTokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: clientId,
+      scope: 'https://www.googleapis.com/auth/drive.file',
+      callback: (resp)=>{
+        if(resp.error){
+          toast('Gagal menghubungkan Google Drive: ' + resp.error);
+          return;
+        }
+        gdriveToken = resp.access_token;
+        const statusEl = document.getElementById('gdriveStatus');
+        statusEl.textContent = 'Terhubung ✔';
+        statusEl.classList.add('connected');
+        toast('Berhasil terhubung ke Google Drive');
+      }
+    });
+    gdriveTokenClient.requestAccessToken();
+  }catch(err){
+    toast('Gagal memulai koneksi Google. Periksa Client ID & pengaturan origin di Google Cloud Console.');
+  }
+});
+
+async function uploadToDrive(filename, mimeType, dataStr, isBase64){
+  if(!gdriveToken){ toast('Hubungkan Google Drive terlebih dahulu'); return null; }
+  const boundary = 'presensi_boundary_' + Date.now();
+  const metadata = { name: filename, mimeType };
+  const body =
+    `--${boundary}\r\n` +
+    `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
+    JSON.stringify(metadata) + `\r\n` +
+    `--${boundary}\r\n` +
+    `Content-Type: ${mimeType}\r\n` +
+    (isBase64 ? `Content-Transfer-Encoding: base64\r\n` : ``) + `\r\n` +
+    dataStr + `\r\n` +
+    `--${boundary}--`;
+
+  const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink', {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer ' + gdriveToken,
+      'Content-Type': `multipart/related; boundary=${boundary}`
+    },
+    body
+  });
+  if(!res.ok){
+    const errText = await res.text();
+    throw new Error(`Upload gagal (${res.status}): ${errText}`);
+  }
+  return res.json();
+}
+
+document.getElementById('btnUploadJsonDrive').addEventListener('click', async ()=>{
+  try{
+    const json = JSON.stringify(DATA, null, 2);
+    const stamp = todayStr();
+    const fname = `Backup_Presensi_${(DATA.settings.namaSekolah||'Sekolah').replace(/\s+/g,'_')}_${stamp}.json`;
+    toast('Mengunggah backup ke Google Drive...');
+    const result = await uploadToDrive(fname, 'application/json', json, false);
+    if(result) toast('Backup JSON berhasil diunggah ke Google Drive');
+  }catch(err){
+    toast('Gagal mengunggah: ' + err.message);
+  }
+});
+
+document.getElementById('btnUploadPdfDrive').addEventListener('click', async ()=>{
+  if(!lastPdfDoc){ toast('Buat dahulu PDF-nya di tab "Rekap & Cetak"'); return; }
+  try{
+    toast('Mengunggah PDF ke Google Drive...');
+    const dataUri = lastPdfDoc.output('datauristring');
+    const base64 = dataUri.split(',')[1];
+    const result = await uploadToDrive(lastPdfFilename || 'Rekap_Presensi.pdf', 'application/pdf', base64, true);
+    if(result) toast('PDF rekap berhasil diunggah ke Google Drive');
+  }catch(err){
+    toast('Gagal mengunggah: ' + err.message);
+  }
 });
 
 /* ============================ INIT ============================ */
@@ -520,5 +753,5 @@ renderSiswaList();
 refreshKelasSelects();
 renderPresensi();
 renderRekap();
-document.getElementById('schoolNameTitle').textContent = DATA.settings.namaSekolah;
-document.getElementById('schoolSubTitle').textContent = DATA.settings.kabupaten + ' · Presensi Peserta Didik';
+renderKopPreview();
+document.getElementById('schoolSubTitle').textContent = 'Presensi Peserta Didik';
