@@ -893,15 +893,15 @@ async function buildRekapPdfDoc(){
     try{ doc.addImage(logoSekolahUrl, 'PNG', pageWidth-KOP_MARGIN-LOGO_SIZE, 22, LOGO_SIZE, LOGO_SIZE); }catch(e){}
   }
   const cx = pageWidth/2;
-  doc.setFont('helvetica','bold'); doc.setFontSize(12.5);
+  doc.setFont('helvetica','bold'); doc.setFontSize(13.5);
   doc.text(s.pemerintah || 'PEMERINTAH KABUPATEN BREBES', cx, 30, {align:'center'});
-  doc.setFontSize(11.5);
+  doc.setFontSize(12.5);
   doc.text(s.dinas || 'DINAS PENDIDIKAN PEMUDA DAN OLAHRAGA', cx, 43, {align:'center'});
-  doc.setFont('helvetica','normal'); doc.setFontSize(10.5);
+  doc.setFontSize(11.5);
   doc.text(s.korwilcam || 'KORWILCAM SATPENDIK KECAMATAN TANJUNG', cx, 55, {align:'center'});
-  doc.setFont('helvetica','bold'); doc.setFontSize(18);
+  doc.setFontSize(19);
   doc.text(s.namaSekolah || 'SD NEGERI TANJUNG 03', cx, 74, {align:'center'});
-  doc.setFont('helvetica','bolditalic'); doc.setFontSize(9);
+  doc.setFont('helvetica','bolditalic'); doc.setFontSize(9.5);
   doc.text(s.alamat || 'Alamat : Jl. Cendrawasih No. 54, Tanjung, Kec.Tanjung, Kab. Brebes, Prov.Jawa Tengah 52254', cx, 87, {align:'center'});
 
   // garis ganda kop surat (tebal lalu tipis)
