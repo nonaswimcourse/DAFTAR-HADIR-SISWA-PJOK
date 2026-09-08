@@ -685,12 +685,26 @@ async function buildJurnalPdfDoc(){
   await drawKopSurat(doc, pageWidth, s);
   const cx = pageWidth/2;
   const filterKelasNama = (DATA.classes.find(k=>k.id===filterKelasId)||{}).nama || '-';
+  const bulan = document.getElementById('jurnalFilterBulan').value; // "YYYY-MM" or ""
+
+  // Nomor semester otomatis: Juli-Desember = Semester 1 (Ganjil), Januari-Juni = Semester 2 (Genap).
+  const bulanNum = bulan ? Number(bulan.split('-')[1]) : (new Date().getMonth()+1);
+  const semesterNum = (bulanNum >= 7 && bulanNum <= 12) ? 1 : 2;
+
+  // Mata pelajaran diambil dari entri jurnal yang tercetak (kalau seragam), fallback ke Pengaturan Kop.
+  const mapelSet = new Set(rows.map(j=>j.mapel).filter(Boolean));
+  const mapelText = mapelSet.size === 1 ? [...mapelSet][0] : (s.mapel || 'PJOK');
+
   doc.setFont('helvetica','bold'); doc.setFontSize(12);
-  doc.text(`JURNAL HARIAN KELAS ${filterKelasNama.toUpperCase()}`, cx, 117, {align:'center'});
-  doc.setFont('helvetica','normal'); doc.setFontSize(10);
-  const bulan = document.getElementById('jurnalFilterBulan').value;
-  const periodeTxt = `Kelas: ${filterKelasNama}${bulan ? '   |   Bulan: ' + bulan : ''}`;
-  doc.text(periodeTxt, cx, 132, {align:'center'});
+  doc.text(`JURNAL HARIAN ${mapelText.toUpperCase()} SEMESTER ${semesterNum}`, cx, 116, {align:'center'});
+  doc.setFontSize(13);
+  doc.text(filterKelasNama.toUpperCase(), cx, 131, {align:'center'});
+  let afterTitleY = 131;
+  if(bulan){
+    doc.setFont('helvetica','normal'); doc.setFontSize(10);
+    doc.text(`Bulan: ${BULAN_ID[bulanNum-1]} ${bulan.split('-')[0]}`, cx, 144, {align:'center'});
+    afterTitleY = 144;
+  }
 
   const head = [['Tanggal','Jam','Mapel','Materi','Ketercapaian TP','Presensi (H/S/I/A)']];
   const body = rows.map(j=>{
@@ -703,7 +717,7 @@ async function buildJurnalPdfDoc(){
   });
 
   doc.autoTable({
-    startY: 145,
+    startY: afterTitleY + 14,
     head, body,
     styles:{fontSize:8, halign:'left', valign:'top', cellPadding:4, lineColor:[210,215,225], lineWidth:0.5},
     headStyles:{fillColor:[13,44,102], textColor:255, fontStyle:'bold', halign:'center'},
