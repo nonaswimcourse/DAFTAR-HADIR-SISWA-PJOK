@@ -88,6 +88,12 @@ async function dbDeleteSiswa(id){
   const { error } = await sb.from('siswa').delete().eq('id', id);
   if(error){ dbErr('menghapus siswa', error); return false; }
   DATA.students = DATA.students.filter(x=>x.id!==id);
+  // Bersihkan juga dari cache presensi di memori supaya id siswa yang sudah
+  // dihapus tidak ikut terkirim lagi saat "Simpan Presensi" pada tanggal
+  // yang sudah pernah dibuka sebelumnya (penyebab error foreign key 23503).
+  Object.values(DATA.attendance).forEach(byDate=>{
+    Object.values(byDate).forEach(rec=>{ delete rec[id]; });
+  });
   return true;
 }
 
@@ -103,12 +109,26 @@ async function dbFetchAttendanceForDate(classId, date){
   return rec;
 }
 async function dbSaveAttendance(classId, date, record){
-  const rows = Object.keys(record).map(siswaId=>({
-    kelas_id: classId, siswa_id: siswaId, tanggal: date, status: record[siswaId]
-  }));
+  // Filter ganda: hanya kirim siswa yang benar-benar masih ada di data siswa saat ini.
+  // Ini jaring pengaman terakhir kalau `record` di memori masih membawa id siswa yang
+  // sudah dihapus (mis. dihapus dari perangkat/tab lain) -> mencegah error foreign key.
+  const validIds = new Set(DATA.students.filter(s=>s.classId===classId).map(s=>s.id));
+  const rows = Object.keys(record)
+    .filter(siswaId=>validIds.has(siswaId))
+    .map(siswaId=>({
+      kelas_id: classId, siswa_id: siswaId, tanggal: date, status: record[siswaId]
+    }));
   if(!rows.length) return true;
   const { error } = await sb.from('presensi').upsert(rows, { onConflict: 'kelas_id,siswa_id,tanggal' });
-  if(error){ dbErr('menyimpan presensi', error); return false; }
+  if(error){
+    if(error.code === '23503'){
+      toast('Gagal menyimpan: ada siswa di daftar ini yang sudah terhapus/tidak sinkron. Silakan muat ulang (refresh) halaman lalu coba lagi.');
+      console.error('menyimpan presensi', error);
+    } else {
+      dbErr('menyimpan presensi', error);
+    }
+    return false;
+  }
   return true;
 }
 async function dbUpdateAttendanceStatus(classId, siswaId, date, status){
@@ -350,6 +370,12 @@ async function renderPresensi(){
   if(!list.length){ updatePresensiStats({}); return; }
 
   const record = await getAttendanceRecord(classId, date);
+
+  // Buang entri siswa yang sudah tidak ada lagi (mis. dihapus di menu "Kelas & Siswa"
+  // tapi datanya sempat ke-cache di memori sebelum dihapus) supaya tidak ikut terkirim
+  // saat "Simpan Presensi" -> mencegah error foreign key ("Key is not present in table siswa").
+  const validIds = new Set(list.map(s=>s.id));
+  Object.keys(record).forEach(id=>{ if(!validIds.has(id)) delete record[id]; });
 
   list.forEach((s,i)=>{
     if(!record[s.id]) record[s.id] = 'H';
