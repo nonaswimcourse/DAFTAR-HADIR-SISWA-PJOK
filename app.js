@@ -429,8 +429,7 @@ function refreshKelasSelects(){
     if(!sel) return;
     const prev = sel.value;
     sel.innerHTML = '';
-    if(id==='jurnalFilterKelas') sel.innerHTML = '<option value="">(Semua kelas)</option>';
-    if(DATA.classes.length===0 && id!=='jurnalFilterKelas'){
+    if(DATA.classes.length===0){
       sel.innerHTML = '<option value="">(Belum ada kelas)</option>';
       return;
     }
@@ -673,9 +672,11 @@ document.getElementById('jurnalFilterBulan').addEventListener('change', renderJu
 
 // ===== PDF Jurnal Harian (kop surat resmi sama seperti PDF rekap presensi) =====
 async function buildJurnalPdfDoc(){
+  const filterKelasId = document.getElementById('jurnalFilterKelas').value;
+  if(!filterKelasId){ toast('Pilih kelas terlebih dahulu untuk mencetak jurnal'); return null; }
   await renderJurnalList();
   const rows = window._lastJurnalList || [];
-  if(rows.length === 0){ toast('Tidak ada data jurnal untuk dicetak'); return null; }
+  if(rows.length === 0){ toast('Tidak ada data jurnal untuk dicetak pada kelas/bulan ini'); return null; }
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({orientation:'landscape', unit:'pt', format:'a4'});
   const pageWidth = doc.internal.pageSize.getWidth();
@@ -683,21 +684,20 @@ async function buildJurnalPdfDoc(){
 
   await drawKopSurat(doc, pageWidth, s);
   const cx = pageWidth/2;
+  const filterKelasNama = (DATA.classes.find(k=>k.id===filterKelasId)||{}).nama || '-';
   doc.setFont('helvetica','bold'); doc.setFontSize(12);
-  doc.text('JURNAL HARIAN / AGENDA KEGIATAN KELAS', cx, 117, {align:'center'});
+  doc.text(`JURNAL HARIAN KELAS ${filterKelasNama.toUpperCase()}`, cx, 117, {align:'center'});
   doc.setFont('helvetica','normal'); doc.setFontSize(10);
-  const filterKelasId = document.getElementById('jurnalFilterKelas').value;
-  const filterKelasNama = filterKelasId ? (DATA.classes.find(k=>k.id===filterKelasId)||{}).nama : 'Semua Kelas';
   const bulan = document.getElementById('jurnalFilterBulan').value;
-  const periodeTxt = `Kelas: ${filterKelasNama || 'Semua Kelas'}${bulan ? '   |   Bulan: ' + bulan : ''}`;
+  const periodeTxt = `Kelas: ${filterKelasNama}${bulan ? '   |   Bulan: ' + bulan : ''}`;
   doc.text(periodeTxt, cx, 132, {align:'center'});
 
-  const head = [['Tanggal','Jam','Kelas','Mapel','Materi','Ketercapaian TP','Presensi (H/S/I/A)']];
+  const head = [['Tanggal','Jam','Mapel','Materi','Ketercapaian TP','Presensi (H/S/I/A)']];
   const body = rows.map(j=>{
     const c = {H:0,S:0,I:0,A:0};
     Object.values(j.presensiRec||{}).forEach(st=>{ if(c[st]!==undefined) c[st]++; });
     return [
-      formatIndoDateFromStr(j.tanggal), j.jam||'-', j.kelasNama, j.mapel||'-',
+      formatIndoDateFromStr(j.tanggal), j.jam||'-', j.mapel||'-',
       j.materi||'-', j.ketercapaian||'-', `${c.H}/${c.S}/${c.I}/${c.A}`
     ];
   });
@@ -708,8 +708,8 @@ async function buildJurnalPdfDoc(){
     styles:{fontSize:8, halign:'left', valign:'top', cellPadding:4, lineColor:[210,215,225], lineWidth:0.5},
     headStyles:{fillColor:[13,44,102], textColor:255, fontStyle:'bold', halign:'center'},
     columnStyles:{
-      0:{cellWidth:56, halign:'center'}, 1:{cellWidth:70, halign:'center'}, 2:{cellWidth:60},
-      3:{cellWidth:60}, 6:{cellWidth:80, halign:'center'}
+      0:{cellWidth:56, halign:'center'}, 1:{cellWidth:70, halign:'center'}, 2:{cellWidth:70},
+      5:{cellWidth:90, halign:'center'}
     },
     margin:{left:40, right:40}
   });
@@ -728,7 +728,7 @@ async function buildJurnalPdfDoc(){
   doc.setFont('helvetica','normal');
   doc.text(`NIP. ${s.nip || ''}`, signX, finalY+85, {align:'left'});
 
-  const fname = `Jurnal_Harian_${(filterKelasNama||'SemuaKelas').replace(/\s+/g,'_')}_${bulan||todayStr()}.pdf`;
+  const fname = `Jurnal_Harian_${filterKelasNama.replace(/\s+/g,'_')}_${bulan||todayStr()}.pdf`;
   return { doc, fname };
 }
 
