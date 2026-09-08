@@ -49,6 +49,7 @@
 <nav class="tabs">
   <button class="tab active" data-page="kelas">🏫 Kelas &amp; Siswa</button>
   <button class="tab" data-page="presensi">✅ Presensi Harian</button>
+  <button class="tab" data-page="jurnal">📔 Jurnal Harian</button>
   <button class="tab" data-page="rekap">📊 Rekap &amp; Cetak</button>
   <button class="tab" data-page="backup">☁️ Google Drive</button>
 </nav>
@@ -139,6 +140,75 @@
 
       <div class="row" style="margin-top:14px;justify-content:flex-end">
         <button class="btn primary" id="btnSimpanPresensi" type="button">💾 Simpan Presensi</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== PAGE: JURNAL HARIAN ===================== -->
+  <section id="jurnal" class="page">
+    <div class="card">
+      <h2>Jurnal Harian</h2>
+      <p class="muted">Catatan resmi harian / agenda kegiatan kelas — bersifat administratif dan kronologis. Berfungsi sebagai bukti fisik bahwa proses pembelajaran benar-benar terlaksana dan untuk memantau progres materi antar kelas. Presensi siswa diambil otomatis dari data Presensi Harian pada tanggal &amp; kelas yang sama.</p>
+
+      <div class="grid2">
+        <div>
+          <label class="field-label">Kelas</label>
+          <select id="jurnalKelas"></select>
+        </div>
+        <div>
+          <label class="field-label">Tanggal</label>
+          <input type="date" id="jurnalTanggal">
+        </div>
+        <div>
+          <label class="field-label">Jam Pelajaran</label>
+          <input id="jurnalJam" placeholder="mis. 07.00 - 08.20 WIB">
+        </div>
+        <div>
+          <label class="field-label">Mata Pelajaran</label>
+          <input id="jurnalMapel" placeholder="Penjasorkes">
+        </div>
+      </div>
+      <label class="field-label">Materi yang Disampaikan</label>
+      <textarea id="jurnalMateri" rows="3" placeholder="Tuliskan materi pembelajaran yang disampaikan hari ini..."></textarea>
+      <label class="field-label">Ketercapaian Tujuan Pembelajaran</label>
+      <textarea id="jurnalKetercapaian" rows="3" placeholder="Tuliskan sejauh mana tujuan pembelajaran tercapai..."></textarea>
+      <label class="field-label">Catatan Tambahan (opsional)</label>
+      <textarea id="jurnalCatatan" rows="2" placeholder="Kendala, catatan khusus, dsb (opsional)"></textarea>
+
+      <div class="row" style="margin-top:14px;justify-content:flex-end;gap:8px">
+        <button class="btn secondary" id="btnBatalEditJurnal" type="button" hidden>Batal Edit</button>
+        <button class="btn primary" id="btnSimpanJurnal" type="button">💾 Simpan Jurnal</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row between">
+        <h2>Riwayat Jurnal</h2>
+      </div>
+      <div class="grid2">
+        <div>
+          <label class="field-label">Filter Kelas</label>
+          <select id="jurnalFilterKelas"></select>
+        </div>
+        <div>
+          <label class="field-label">Bulan</label>
+          <input type="month" id="jurnalFilterBulan">
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th style="width:90px">Tanggal</th><th style="width:120px">Jam</th><th>Kelas</th>
+            <th>Materi</th><th style="width:110px">Presensi</th><th style="width:110px">Aksi</th>
+          </tr></thead>
+          <tbody id="jurnalListBody"></tbody>
+        </table>
+      </div>
+      <p class="empty" id="jurnalEmptyMsg" hidden>Belum ada jurnal pada filter ini.</p>
+
+      <div class="row" style="margin-top:16px;justify-content:flex-end">
+        <button class="btn primary" id="btnUnduhJurnalPdf" type="button">📄 Unduh Jurnal PDF</button>
       </div>
     </div>
   </section>

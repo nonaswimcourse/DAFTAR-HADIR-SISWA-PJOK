@@ -178,6 +178,45 @@ async function dbFetchAttendanceRange(classId, start, end){
   return byDate;
 }
 
+/* --------- JURNAL HARIAN --------- */
+// Catatan resmi harian / agenda kegiatan kelas: tanggal, jam, kelas, mapel, materi,
+// ketercapaian tujuan pembelajaran. Presensi siswa diambil otomatis dari tabel
+// 'presensi' yang sudah ada (per kelas_id + tanggal), tidak disimpan dobel di sini.
+async function dbFetchJurnal(classId, start, end){
+  let q = sb.from('jurnal').select('*').order('tanggal', { ascending:false }).order('jam', { ascending:true });
+  if(classId) q = q.eq('kelas_id', classId);
+  if(start) q = q.gte('tanggal', start);
+  if(end) q = q.lte('tanggal', end);
+  const { data, error } = await q;
+  if(error){ dbErr('memuat jurnal harian', error); return []; }
+  return (data||[]).map(j=>({
+    id:j.id, classId:j.kelas_id, tanggal:j.tanggal, jam:j.jam, mapel:j.mapel,
+    materi:j.materi, ketercapaian:j.ketercapaian, catatan:j.catatan
+  }));
+}
+async function dbInsertJurnal(entry){
+  const row = {
+    id: uid(), kelas_id: entry.classId, tanggal: entry.tanggal, jam: entry.jam,
+    mapel: entry.mapel, materi: entry.materi, ketercapaian: entry.ketercapaian, catatan: entry.catatan || ''
+  };
+  const { error } = await sb.from('jurnal').insert(row);
+  if(error){ dbErr('menyimpan jurnal', error); return null; }
+  return row;
+}
+async function dbUpdateJurnal(id, entry){
+  const { error } = await sb.from('jurnal').update({
+    kelas_id: entry.classId, tanggal: entry.tanggal, jam: entry.jam,
+    mapel: entry.mapel, materi: entry.materi, ketercapaian: entry.ketercapaian, catatan: entry.catatan || ''
+  }).eq('id', id);
+  if(error){ dbErr('mengubah jurnal', error); return false; }
+  return true;
+}
+async function dbDeleteJurnal(id){
+  const { error } = await sb.from('jurnal').delete().eq('id', id);
+  if(error){ dbErr('menghapus jurnal', error); return false; }
+  return true;
+}
+
 /* --------- PENGATURAN (SETTINGS) --------- */
 async function dbFetchSettings(){
   const { data, error } = await sb.from('pengaturan').select('*').eq('id','main').maybeSingle();
@@ -230,6 +269,7 @@ document.querySelectorAll('nav.tabs .tab').forEach(btn=>{
     document.getElementById(btn.dataset.page).classList.add('active');
     if(btn.dataset.page === 'presensi') await renderPresensi();
     if(btn.dataset.page === 'rekap') await renderRekap();
+    if(btn.dataset.page === 'jurnal') await renderJurnalList();
   });
 });
 
@@ -384,11 +424,13 @@ document.getElementById('importSiswaBtn').addEventListener('click', async ()=>{
 
 /* ============================ SELECT REFRESH ============================ */
 function refreshKelasSelects(){
-  ['presensiKelas','rekapKelas'].forEach(id=>{
+  ['presensiKelas','rekapKelas','jurnalKelas','jurnalFilterKelas'].forEach(id=>{
     const sel = document.getElementById(id);
+    if(!sel) return;
     const prev = sel.value;
     sel.innerHTML = '';
-    if(DATA.classes.length===0){
+    if(id==='jurnalFilterKelas') sel.innerHTML = '<option value="">(Semua kelas)</option>';
+    if(DATA.classes.length===0 && id!=='jurnalFilterKelas'){
       sel.innerHTML = '<option value="">(Belum ada kelas)</option>';
       return;
     }
@@ -498,6 +540,202 @@ document.getElementById('btnSimpanPresensi').addEventListener('click', async ()=
   const ok = await dbSaveAttendance(classId, date, record);
   if(!ok) return;
   toast(`Presensi tanggal ${formatIndoDateFromStr(date)} tersimpan`);
+});
+
+/* ============================ JURNAL HARIAN ============================ */
+document.getElementById('jurnalTanggal').value = todayStr();
+document.getElementById('jurnalMapel').value = DATA.settings.mapel || '';
+
+let jurnalEditId = null;
+
+function statusPresensiSingkat(rec){
+  if(!rec || Object.keys(rec).length===0) return '<span class="small-muted">Belum diisi</span>';
+  const c = {H:0,S:0,I:0,A:0};
+  Object.values(rec).forEach(st=>{ if(c[st]!==undefined) c[st]++; });
+  return `H:${c.H} S:${c.S} I:${c.I} A:${c.A}`;
+}
+
+async function renderJurnalList(){
+  const classId = document.getElementById('jurnalFilterKelas').value || null;
+  const bulan = document.getElementById('jurnalFilterBulan').value; // "YYYY-MM"
+  let start = null, end = null;
+  if(bulan){
+    start = bulan + '-01';
+    const [y,m] = bulan.split('-').map(Number);
+    const lastDay = new Date(y, m, 0).getDate();
+    end = bulan + '-' + String(lastDay).padStart(2,'0');
+  }
+  const list = await dbFetchJurnal(classId, start, end);
+  const tbody = document.getElementById('jurnalListBody');
+  const emptyMsg = document.getElementById('jurnalEmptyMsg');
+  if(list.length === 0){
+    tbody.innerHTML = '';
+    emptyMsg.hidden = false;
+    window._lastJurnalList = [];
+    return;
+  }
+  emptyMsg.hidden = true;
+
+  // Ambil presensi untuk tiap entri (per kelas+tanggal) supaya ringkasan H/S/I/A bisa ditampilkan.
+  const rows = [];
+  for(const j of list){
+    const kelas = DATA.classes.find(k=>k.id===j.classId);
+    const rec = await dbFetchAttendanceForDate(j.classId, j.tanggal);
+    rows.push({ ...j, kelasNama: kelas ? kelas.nama : '(kelas terhapus)', presensiRec: rec });
+  }
+  window._lastJurnalList = rows;
+
+  tbody.innerHTML = rows.map(j=>`
+    <tr>
+      <td>${formatIndoDateFromStr(j.tanggal)}</td>
+      <td>${escapeHtml(j.jam||'-')}</td>
+      <td>${escapeHtml(j.kelasNama)}</td>
+      <td style="max-width:260px;white-space:normal">${escapeHtml((j.materi||'').slice(0,120))}${(j.materi||'').length>120?'…':''}</td>
+      <td>${statusPresensiSingkat(j.presensiRec)}</td>
+      <td>
+        <button class="btn secondary sm" type="button" data-edit="${j.id}">✏️</button>
+        <button class="btn danger sm" type="button" data-del="${j.id}">🗑</button>
+      </td>
+    </tr>
+  `).join('');
+
+  tbody.querySelectorAll('[data-edit]').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      const j = rows.find(r=>r.id===b.dataset.edit);
+      if(!j) return;
+      jurnalEditId = j.id;
+      document.getElementById('jurnalKelas').value = j.classId;
+      document.getElementById('jurnalTanggal').value = j.tanggal;
+      document.getElementById('jurnalJam').value = j.jam || '';
+      document.getElementById('jurnalMapel').value = j.mapel || '';
+      document.getElementById('jurnalMateri').value = j.materi || '';
+      document.getElementById('jurnalKetercapaian').value = j.ketercapaian || '';
+      document.getElementById('jurnalCatatan').value = j.catatan || '';
+      document.getElementById('btnBatalEditJurnal').hidden = false;
+      document.getElementById('btnSimpanJurnal').textContent = '💾 Simpan Perubahan';
+      window.scrollTo({top:0, behavior:'smooth'});
+    });
+  });
+  tbody.querySelectorAll('[data-del]').forEach(b=>{
+    b.addEventListener('click', async ()=>{
+      if(!confirm('Hapus entri jurnal ini?')) return;
+      const ok = await dbDeleteJurnal(b.dataset.del);
+      if(!ok) return;
+      toast('Jurnal dihapus');
+      await renderJurnalList();
+    });
+  });
+}
+
+function resetJurnalForm(){
+  jurnalEditId = null;
+  document.getElementById('jurnalJam').value = '';
+  document.getElementById('jurnalMateri').value = '';
+  document.getElementById('jurnalKetercapaian').value = '';
+  document.getElementById('jurnalCatatan').value = '';
+  document.getElementById('jurnalMapel').value = DATA.settings.mapel || '';
+  document.getElementById('btnBatalEditJurnal').hidden = true;
+  document.getElementById('btnSimpanJurnal').textContent = '💾 Simpan Jurnal';
+}
+
+document.getElementById('btnBatalEditJurnal').addEventListener('click', resetJurnalForm);
+
+document.getElementById('btnSimpanJurnal').addEventListener('click', async ()=>{
+  const classId = document.getElementById('jurnalKelas').value;
+  const tanggal = document.getElementById('jurnalTanggal').value;
+  const materi = document.getElementById('jurnalMateri').value.trim();
+  if(!classId){ toast('Pilih kelas terlebih dahulu'); return; }
+  if(!tanggal){ toast('Pilih tanggal terlebih dahulu'); return; }
+  if(!materi){ toast('Materi yang disampaikan wajib diisi'); return; }
+  const entry = {
+    classId, tanggal,
+    jam: document.getElementById('jurnalJam').value.trim(),
+    mapel: document.getElementById('jurnalMapel').value.trim() || (DATA.settings.mapel || ''),
+    materi,
+    ketercapaian: document.getElementById('jurnalKetercapaian').value.trim(),
+    catatan: document.getElementById('jurnalCatatan').value.trim()
+  };
+  if(jurnalEditId){
+    const ok = await dbUpdateJurnal(jurnalEditId, entry);
+    if(!ok) return;
+    toast('Jurnal diperbarui');
+  } else {
+    const row = await dbInsertJurnal(entry);
+    if(!row) return;
+    toast('Jurnal tersimpan');
+  }
+  resetJurnalForm();
+  await renderJurnalList();
+});
+
+document.getElementById('jurnalFilterKelas').addEventListener('change', renderJurnalList);
+document.getElementById('jurnalFilterBulan').addEventListener('change', renderJurnalList);
+
+// ===== PDF Jurnal Harian (kop surat resmi sama seperti PDF rekap presensi) =====
+async function buildJurnalPdfDoc(){
+  await renderJurnalList();
+  const rows = window._lastJurnalList || [];
+  if(rows.length === 0){ toast('Tidak ada data jurnal untuk dicetak'); return null; }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({orientation:'landscape', unit:'pt', format:'a4'});
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const s = DATA.settings;
+
+  await drawKopSurat(doc, pageWidth, s);
+  const cx = pageWidth/2;
+  doc.setFont('helvetica','bold'); doc.setFontSize(12);
+  doc.text('JURNAL HARIAN / AGENDA KEGIATAN KELAS', cx, 117, {align:'center'});
+  doc.setFont('helvetica','normal'); doc.setFontSize(10);
+  const filterKelasId = document.getElementById('jurnalFilterKelas').value;
+  const filterKelasNama = filterKelasId ? (DATA.classes.find(k=>k.id===filterKelasId)||{}).nama : 'Semua Kelas';
+  const bulan = document.getElementById('jurnalFilterBulan').value;
+  const periodeTxt = `Kelas: ${filterKelasNama || 'Semua Kelas'}${bulan ? '   |   Bulan: ' + bulan : ''}`;
+  doc.text(periodeTxt, cx, 132, {align:'center'});
+
+  const head = [['Tanggal','Jam','Kelas','Mapel','Materi','Ketercapaian TP','Presensi (H/S/I/A)']];
+  const body = rows.map(j=>{
+    const c = {H:0,S:0,I:0,A:0};
+    Object.values(j.presensiRec||{}).forEach(st=>{ if(c[st]!==undefined) c[st]++; });
+    return [
+      formatIndoDateFromStr(j.tanggal), j.jam||'-', j.kelasNama, j.mapel||'-',
+      j.materi||'-', j.ketercapaian||'-', `${c.H}/${c.S}/${c.I}/${c.A}`
+    ];
+  });
+
+  doc.autoTable({
+    startY: 145,
+    head, body,
+    styles:{fontSize:8, halign:'left', valign:'top', cellPadding:4, lineColor:[210,215,225], lineWidth:0.5},
+    headStyles:{fillColor:[13,44,102], textColor:255, fontStyle:'bold', halign:'center'},
+    columnStyles:{
+      0:{cellWidth:56, halign:'center'}, 1:{cellWidth:70, halign:'center'}, 2:{cellWidth:60},
+      3:{cellWidth:60}, 6:{cellWidth:80, halign:'center'}
+    },
+    margin:{left:40, right:40}
+  });
+
+  let finalY = doc.lastAutoTable.finalY + 40;
+  const pageH = doc.internal.pageSize.getHeight();
+  if(finalY > pageH - 90){ doc.addPage('a4','landscape'); finalY = 60; }
+
+  const tglCetak = formatIndoDate(new Date());
+  const signX = pageWidth - 220;
+  doc.setFont('helvetica','normal'); doc.setFontSize(10);
+  doc.text(`${s.tempat || 'Tanjung'}, ${tglCetak}`, signX, finalY, {align:'left'});
+  doc.text(`${s.mapel || 'Guru Penjasorkes'}`, signX, finalY+15, {align:'left'});
+  doc.setFont('helvetica','bold');
+  doc.text(`${s.namaGuru || ''}`, signX, finalY+70, {align:'left'});
+  doc.setFont('helvetica','normal');
+  doc.text(`NIP. ${s.nip || ''}`, signX, finalY+85, {align:'left'});
+
+  const fname = `Jurnal_Harian_${(filterKelasNama||'SemuaKelas').replace(/\s+/g,'_')}_${bulan||todayStr()}.pdf`;
+  return { doc, fname };
+}
+
+document.getElementById('btnUnduhJurnalPdf').addEventListener('click', async ()=>{
+  const built = await buildJurnalPdfDoc();
+  if(!built) return;
+  built.doc.save(built.fname);
 });
 
 /* ============================ KOP SURAT (PREVIEW) ============================ */
@@ -866,24 +1104,14 @@ function getImageDataUrl(src){
   });
 }
 
-// Membuat dokumen PDF rekap dari data terbaru. Dipakai baik oleh tombol "Unduh"
-// maupun tombol "Kirim ke Google Drive" secara independen — masing-masing membuat
-// PDF-nya sendiri, tidak saling bergantung.
-async function buildRekapPdfDoc(){
-  await renderRekap();
-  if(!lastRekapPayload){ toast('Tidak ada data untuk dicetak'); return null; }
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({orientation:'landscape', unit:'pt', format:'a4'});
-  const pageWidth = doc.internal.pageSize.getWidth();
-  const s = DATA.settings;
-  const p = lastRekapPayload;
+// Menggambar kop surat resmi (logo kiri/kanan + teks tengah + garis ganda) di posisi
+// standar, dipakai bersama oleh PDF Rekap Presensi dan PDF Jurnal Harian supaya
+// tampilannya selalu konsisten. Return: posisi Y setelah garis ganda (siap dipakai judul).
+async function drawKopSurat(doc, pageWidth, s){
   const [logoBrebesUrl, logoSekolahUrl] = await Promise.all([
     getImageDataUrl('logo-brebes.png'),
     getImageDataUrl('logo.png')
   ]);
-
-  // ===== KOP SURAT RESMI (Logo Brebes kiri / teks tengah / Logo Sekolah kanan + garis ganda) =====
-  // Margin 40pt disamakan dengan margin tabel di bawah supaya kop & tabel rata sejajar.
   const KOP_MARGIN = 40;
   const LOGO_SIZE = 62;
   if(logoBrebesUrl){
@@ -904,12 +1132,27 @@ async function buildRekapPdfDoc(){
   doc.setFont('helvetica','bolditalic'); doc.setFontSize(9.5);
   doc.text(s.alamat || 'Alamat : Jl. Cendrawasih No. 54, Tanjung, Kec.Tanjung, Kab. Brebes, Prov.Jawa Tengah 52254', cx, 87, {align:'center'});
 
-  // garis ganda kop surat (tebal lalu tipis)
   doc.setLineWidth(1.6);
   doc.line(KOP_MARGIN, 97, pageWidth-KOP_MARGIN, 97);
   doc.setLineWidth(0.7);
   doc.line(KOP_MARGIN, 100.5, pageWidth-KOP_MARGIN, 100.5);
+  return 100.5; // Y setelah garis ganda
+}
 
+// Membuat dokumen PDF rekap dari data terbaru. Dipakai baik oleh tombol "Unduh"
+// maupun tombol "Kirim ke Google Drive" secara independen — masing-masing membuat
+// PDF-nya sendiri, tidak saling bergantung.
+async function buildRekapPdfDoc(){
+  await renderRekap();
+  if(!lastRekapPayload){ toast('Tidak ada data untuk dicetak'); return null; }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({orientation:'landscape', unit:'pt', format:'a4'});
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const s = DATA.settings;
+  const p = lastRekapPayload;
+
+  await drawKopSurat(doc, pageWidth, s);
+  const cx = pageWidth/2;
   doc.setFont('helvetica','bold'); doc.setFontSize(12);
   doc.text(p.semesterMode ? `DAFTAR HADIR SEMESTER ${(p.semesterJenis||'ganjil').toUpperCase()} PJOK` : 'DAFTAR REKAP PRESENSI PESERTA DIDIK', cx, 117, {align:'center'});
   doc.setFont('helvetica','normal'); doc.setFontSize(10);
