@@ -883,34 +883,38 @@ async function buildRekapPdfDoc(){
   ]);
 
   // ===== KOP SURAT RESMI (Logo Brebes kiri / teks tengah / Logo Sekolah kanan + garis ganda) =====
+  // Margin 40pt disamakan dengan margin tabel di bawah supaya kop & tabel rata sejajar.
+  const KOP_MARGIN = 40;
+  const LOGO_SIZE = 62;
   if(logoBrebesUrl){
-    try{ doc.addImage(logoBrebesUrl, 'PNG', 40, 20, 56, 56); }catch(e){}
+    try{ doc.addImage(logoBrebesUrl, 'PNG', KOP_MARGIN, 22, LOGO_SIZE, LOGO_SIZE); }catch(e){}
   }
   if(logoSekolahUrl){
-    try{ doc.addImage(logoSekolahUrl, 'PNG', pageWidth-96, 20, 56, 56); }catch(e){}
+    try{ doc.addImage(logoSekolahUrl, 'PNG', pageWidth-KOP_MARGIN-LOGO_SIZE, 22, LOGO_SIZE, LOGO_SIZE); }catch(e){}
   }
   const cx = pageWidth/2;
-  doc.setFont('helvetica','bold'); doc.setFontSize(13);
+  doc.setFont('helvetica','bold'); doc.setFontSize(12.5);
   doc.text(s.pemerintah || 'PEMERINTAH KABUPATEN BREBES', cx, 30, {align:'center'});
-  doc.setFontSize(12);
-  doc.text(s.dinas || 'DINAS PENDIDIKAN PEMUDA DAN OLAHRAGA', cx, 44, {align:'center'});
-  doc.text(s.korwilcam || 'KORWILCAM SATPENDIK KECAMATAN TANJUNG', cx, 58, {align:'center'});
-  doc.setFontSize(17);
-  doc.text(s.namaSekolah || 'SD NEGERI TANJUNG 03', cx, 76, {align:'center'});
-  doc.setFont('helvetica','bolditalic'); doc.setFontSize(9.5);
-  doc.text(s.alamat || 'Alamat : Jl. Cendrawasih No. 54, Tanjung, Kec.Tanjung, Kab. Brebes, Prov.Jawa Tengah 52254', cx, 89, {align:'center'});
+  doc.setFontSize(11.5);
+  doc.text(s.dinas || 'DINAS PENDIDIKAN PEMUDA DAN OLAHRAGA', cx, 43, {align:'center'});
+  doc.setFont('helvetica','normal'); doc.setFontSize(10.5);
+  doc.text(s.korwilcam || 'KORWILCAM SATPENDIK KECAMATAN TANJUNG', cx, 55, {align:'center'});
+  doc.setFont('helvetica','bold'); doc.setFontSize(18);
+  doc.text(s.namaSekolah || 'SD NEGERI TANJUNG 03', cx, 74, {align:'center'});
+  doc.setFont('helvetica','bolditalic'); doc.setFontSize(9);
+  doc.text(s.alamat || 'Alamat : Jl. Cendrawasih No. 54, Tanjung, Kec.Tanjung, Kab. Brebes, Prov.Jawa Tengah 52254', cx, 87, {align:'center'});
 
   // garis ganda kop surat (tebal lalu tipis)
   doc.setLineWidth(1.6);
-  doc.line(40, 98, pageWidth-40, 98);
+  doc.line(KOP_MARGIN, 97, pageWidth-KOP_MARGIN, 97);
   doc.setLineWidth(0.7);
-  doc.line(40, 101.5, pageWidth-40, 101.5);
+  doc.line(KOP_MARGIN, 100.5, pageWidth-KOP_MARGIN, 100.5);
 
   doc.setFont('helvetica','bold'); doc.setFontSize(12);
-  doc.text(p.semesterMode ? `DAFTAR HADIR SEMESTER ${(p.semesterJenis||'ganjil').toUpperCase()} PJOK` : 'DAFTAR REKAP PRESENSI PESERTA DIDIK', cx, 116, {align:'center'});
+  doc.text(p.semesterMode ? `DAFTAR HADIR SEMESTER ${(p.semesterJenis||'ganjil').toUpperCase()} PJOK` : 'DAFTAR REKAP PRESENSI PESERTA DIDIK', cx, 117, {align:'center'});
   doc.setFont('helvetica','normal'); doc.setFontSize(10);
   const periodeTxt = `Kelas: ${p.className}   |   Periode: ${formatIndoDateFromStr(p.range.start)} s.d. ${formatIndoDateFromStr(p.range.end)}`;
-  doc.text(periodeTxt, cx, 131, {align:'center'});
+  doc.text(periodeTxt, cx, 132, {align:'center'});
 
   // Table. Mode semester guru mapel -> header 2 baris (nama bulan lalu tanggal
   // pertemuan mingguan di bawahnya), karena kolomnya bisa sampai ~24 pertemuan (6 bulan).
@@ -934,7 +938,7 @@ async function buildRekapPdfDoc(){
   const fontSz = p.dates.length > 20 ? 6 : p.dates.length > 12 ? 7 : 7.5;
 
   doc.autoTable({
-    startY: 142,
+    startY: 145,
     head, body: rows,
     styles:{fontSize:fontSz, halign:'center', cellPadding:2, lineColor:[210,215,225], lineWidth:0.5},
     headStyles:{fillColor:[13,44,102], textColor:255, fontStyle:'bold'},
