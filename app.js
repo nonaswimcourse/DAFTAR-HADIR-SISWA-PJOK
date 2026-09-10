@@ -217,6 +217,58 @@ async function dbDeleteJurnal(id){
   return true;
 }
 
+/* --------- DAFTAR NILAI (KURIKULUM MERDEKA) --------- */
+// 'nilai_materi': nama 6 materi per kelas+semester (bisa diedit guru, default terisi dari CP PJOK).
+// 'nilai'       : nilai per siswa per kelas+semester (materi1..6 + pengetahuan/keterampilan/praktik/
+//                 nilai harian/PTS/PAS). Rata-rata materi, Nilai Akhir, Predikat & Keterangan
+//                 dihitung di sisi aplikasi (tidak disimpan dobel di DB), sama seperti formula di Excel.
+async function dbFetchNilaiMateri(classId, semester){
+  const { data, error } = await sb.from('nilai_materi').select('urutan,nama')
+    .eq('kelas_id', classId).eq('semester', semester).order('urutan', { ascending:true });
+  if(error){ dbErr('memuat materi nilai', error); return []; }
+  return data || [];
+}
+async function dbSaveNilaiMateri(classId, semester, namaArr){
+  const rows = namaArr.map((nama,i)=>({
+    id: `mt_${classId}_${semester}_${i+1}`, kelas_id: classId, semester, urutan: i+1, nama
+  }));
+  const { error } = await sb.from('nilai_materi').upsert(rows, { onConflict: 'kelas_id,semester,urutan' });
+  if(error){ dbErr('menyimpan materi nilai', error); return false; }
+  return true;
+}
+async function dbFetchNilai(classId, semester){
+  const { data, error } = await sb.from('nilai').select('*').eq('kelas_id', classId).eq('semester', semester);
+  if(error){ dbErr('memuat nilai', error); return {}; }
+  const map = {};
+  (data||[]).forEach(r=>{
+    map[r.siswa_id] = {
+      materi1:r.materi1, materi2:r.materi2, materi3:r.materi3, materi4:r.materi4, materi5:r.materi5, materi6:r.materi6,
+      pengetahuan:r.pengetahuan, keterampilan:r.keterampilan, praktik:r.praktik,
+      nilaiHarian:r.nilai_harian, pts:r.pts, pas:r.pas
+    };
+  });
+  return map;
+}
+function numOrNull(v){ return (v===''||v===null||v===undefined||isNaN(v)) ? null : Number(v); }
+async function dbSaveNilaiBatch(classId, semester, recordMap){
+  const validIds = new Set(DATA.students.filter(s=>s.classId===classId).map(s=>s.id));
+  const rows = Object.keys(recordMap).filter(id=>validIds.has(id)).map(siswaId=>{
+    const r = recordMap[siswaId] || {};
+    return {
+      id: `nl_${classId}_${siswaId}_${semester}`,
+      kelas_id: classId, siswa_id: siswaId, semester,
+      materi1:numOrNull(r.materi1), materi2:numOrNull(r.materi2), materi3:numOrNull(r.materi3),
+      materi4:numOrNull(r.materi4), materi5:numOrNull(r.materi5), materi6:numOrNull(r.materi6),
+      pengetahuan:numOrNull(r.pengetahuan), keterampilan:numOrNull(r.keterampilan), praktik:numOrNull(r.praktik),
+      nilai_harian:numOrNull(r.nilaiHarian), pts:numOrNull(r.pts), pas:numOrNull(r.pas)
+    };
+  });
+  if(!rows.length) return true;
+  const { error } = await sb.from('nilai').upsert(rows, { onConflict: 'kelas_id,siswa_id,semester' });
+  if(error){ dbErr('menyimpan nilai', error); return false; }
+  return true;
+}
+
 /* --------- PENGATURAN (SETTINGS) --------- */
 async function dbFetchSettings(){
   const { data, error } = await sb.from('pengaturan').select('*').eq('id','main').maybeSingle();
@@ -270,6 +322,7 @@ document.querySelectorAll('nav.tabs .tab').forEach(btn=>{
     if(btn.dataset.page === 'presensi') await renderPresensi();
     if(btn.dataset.page === 'rekap') await renderRekap();
     if(btn.dataset.page === 'jurnal') await renderJurnalList();
+    if(btn.dataset.page === 'nilai') await renderNilai();
   });
 });
 
@@ -424,7 +477,7 @@ document.getElementById('importSiswaBtn').addEventListener('click', async ()=>{
 
 /* ============================ SELECT REFRESH ============================ */
 function refreshKelasSelects(){
-  ['presensiKelas','rekapKelas','jurnalKelas','jurnalFilterKelas'].forEach(id=>{
+  ['presensiKelas','rekapKelas','jurnalKelas','jurnalFilterKelas','nilaiKelas'].forEach(id=>{
     const sel = document.getElementById(id);
     if(!sel) return;
     const prev = sel.value;
@@ -750,6 +803,359 @@ document.getElementById('btnUnduhJurnalPdf').addEventListener('click', async ()=
   const built = await buildJurnalPdfDoc();
   if(!built) return;
   built.doc.save(built.fname);
+});
+
+/* ============================ DAFTAR NILAI (KURIKULUM MERDEKA) ============================ */
+// Materi bawaan per kelas 1-6 & semester 1/2, diambil dari pemetaan CP PJOK
+// Fase A (kelas 1-2), Fase B (kelas 3-4), Fase C (kelas 5-6). Guru tetap bisa mengubahnya bebas.
+const MATERI_DEFAULT = {
+  1:{1:['Gerak lokomotor','Gerak nonlokomotor','Gerak manipulatif','Permainan sederhana','Senam dasar','Keselamatan aktivitas jasmani'],
+     2:['Gerak berirama','Aktivitas air*','Kebugaran jasmani dasar','Pola hidup bersih dan sehat','Pengenalan anggota/fungsi tubuh','Permainan gerak sederhana']},
+  2:{1:['Variasi gerak lokomotor','Variasi gerak nonlokomotor','Variasi gerak manipulatif','Permainan sederhana','Senam dasar','Keselamatan aktivitas jasmani'],
+     2:['Gerak berirama','Aktivitas air*','Latihan kebugaran','Kebersihan diri dan lingkungan','Makanan sehat dan bergizi','Permainan dan olahraga sederhana']},
+  3:{1:['Permainan bola besar','Permainan bola kecil','Atletik: jalan dan lari','Variasi & kombinasi gerak','Senam lantai dasar','Keselamatan berolahraga'],
+     2:['Gerak berirama','Kebugaran jasmani','Pola hidup sehat','Kebersihan dan kesehatan diri','Permainan/olahraga modifikasi','Aktivitas air*']},
+  4:{1:['Permainan bola besar','Permainan bola kecil','Atletik: jalan, lari, lompat','Variasi & kombinasi keterampilan','Senam lantai','Keselamatan berolahraga'],
+     2:['Gerak berirama','Kebugaran jasmani','Makanan bergizi seimbang','Kebersihan & kesehatan diri','Penyakit menular/tidak menular','Aktivitas air*']},
+  5:{1:['Permainan bola besar','Permainan bola kecil','Atletik: jalan cepat & lari','Modifikasi keterampilan gerak','Senam lantai','Keselamatan aktivitas olahraga'],
+     2:['Gerak berirama','Kebugaran jasmani & pengukuran','Makanan bergizi & jajanan sehat','Aktivitas fisik & istirahat','Pertumbuhan dan perkembangan','Aktivitas air*']},
+  6:{1:['Permainan bola besar','Permainan bola kecil','Atletik: jalan cepat & lari','Modifikasi strategi gerak','Senam lantai','Keselamatan aktivitas olahraga'],
+     2:['Gerak berirama','Kebugaran jasmani & pengukuran','Makanan bergizi & jajanan sehat','Aktivitas fisik & istirahat','Pertumbuhan dan perkembangan','Aktivitas air*']}
+};
+function detectGradeLevel(kelasNama){
+  const m = String(kelasNama||'').match(/\d+/);
+  if(!m) return null;
+  const n = parseInt(m[0],10);
+  return (n>=1 && n<=6) ? n : null;
+}
+function getDefaultMateri(kelasNama, semester){
+  const lvl = detectGradeLevel(kelasNama) || 1;
+  return (MATERI_DEFAULT[lvl] && MATERI_DEFAULT[lvl][semester]) ||
+    ['Materi 1','Materi 2','Materi 3','Materi 4','Materi 5','Materi 6'];
+}
+
+// Semester berjalan otomatis: Juli-Desember = Semester 1, Januari-Juni = Semester 2.
+(function initNilaiSemesterDefault(){
+  const bulanNow = new Date().getMonth()+1;
+  document.getElementById('nilaiSemester').value = (bulanNow>=7 && bulanNow<=12) ? '1' : '2';
+})();
+
+function avgOrBlank(vals){
+  const nums = vals.filter(v=>v!==''&&v!==null&&v!==undefined&&!isNaN(v)).map(Number);
+  if(!nums.length) return '';
+  return nums.reduce((a,b)=>a+b,0)/nums.length;
+}
+function computeNilaiAkhirRaw(rec){
+  const rata = avgOrBlank([rec.materi1,rec.materi2,rec.materi3,rec.materi4,rec.materi5,rec.materi6]);
+  const akhirRaw = avgOrBlank([rata, rec.pengetahuan, rec.keterampilan, rec.praktik, rec.nilaiHarian, rec.pts, rec.pas]);
+  return { rata, akhir: akhirRaw==='' ? '' : Math.round(akhirRaw) };
+}
+function predikatFromNilai(n){
+  if(n===''||n===null||n===undefined) return '';
+  if(n>=90) return 'A'; if(n>=80) return 'B'; if(n>=70) return 'C'; return 'D';
+}
+function keteranganFromNilai(n){
+  if(n===''||n===null||n===undefined) return '';
+  return n>=70 ? 'Tuntas' : 'Belum Tuntas';
+}
+
+let nilaiRecord = {};      // {siswaId: {materi1..6, pengetahuan, keterampilan, praktik, nilaiHarian, pts, pas, _rata, _akhir}}
+let nilaiMateriNames = [];  // 6 nama materi untuk kelas+semester yang sedang dibuka
+
+function updateNilaiRowCompute(tr, rec){
+  const { rata, akhir } = computeNilaiAkhirRaw(rec);
+  rec._rata = rata; rec._akhir = akhir;
+  tr.querySelector('.nilai-rata').textContent = rata==='' ? '-' : rata.toFixed(1);
+  tr.querySelector('.nilai-akhir').textContent = akhir==='' ? '-' : akhir;
+  tr.querySelector('.nilai-predikat').textContent = predikatFromNilai(akhir) || '-';
+  tr.querySelector('.nilai-ket').textContent = keteranganFromNilai(akhir) || '-';
+}
+
+function updateNilaiStats(){
+  const vals = Object.values(nilaiRecord).map(r=>r._akhir).filter(v=>v!==''&&v!==undefined&&v!==null);
+  const box = document.getElementById('nilaiStats');
+  if(!vals.length){ box.innerHTML=''; return; }
+  const rata = Math.round(vals.reduce((a,b)=>a+b,0)/vals.length);
+  const tertinggi = Math.max(...vals);
+  const terendah = Math.min(...vals);
+  const tuntas = vals.filter(v=>v>=70).length;
+  const belumTuntas = vals.length - tuntas;
+  box.innerHTML = `
+    <div class="stat-box H"><b>${rata}</b><span>Rata-rata Kelas</span></div>
+    <div class="stat-box"><b>${tertinggi}</b><span>Tertinggi</span></div>
+    <div class="stat-box"><b>${terendah}</b><span>Terendah</span></div>
+    <div class="stat-box"><b>${tuntas}</b><span>Tuntas</span></div>
+    <div class="stat-box A"><b>${belumTuntas}</b><span>Belum Tuntas</span></div>
+  `;
+}
+
+async function renderNilai(){
+  refreshKelasSelects();
+  const classId = document.getElementById('nilaiKelas').value;
+  const semester = Number(document.getElementById('nilaiSemester').value || 1);
+  const thead = document.getElementById('nilaiTableHead');
+  const tbody = document.getElementById('nilaiTableBody');
+  const emptyMsg = document.getElementById('nilaiEmptyMsg');
+  thead.innerHTML=''; tbody.innerHTML='';
+  document.getElementById('nilaiStats').innerHTML = '';
+  nilaiRecord = {};
+
+  if(!classId){ emptyMsg.hidden=false; emptyMsg.textContent='Buat kelas terlebih dahulu di menu "Kelas & Siswa".'; return; }
+
+  const kelas = DATA.classes.find(k=>k.id===classId);
+  const defaults = getDefaultMateri(kelas ? kelas.nama : '', semester);
+  const materiRows = await dbFetchNilaiMateri(classId, semester);
+  nilaiMateriNames = [];
+  for(let i=1;i<=6;i++){
+    const found = materiRows.find(m=>m.urutan===i);
+    nilaiMateriNames.push((found && found.nama) ? found.nama : defaults[i-1]);
+  }
+  for(let i=0;i<6;i++){
+    const inp = document.getElementById('materiInput'+i);
+    if(inp) inp.value = nilaiMateriNames[i];
+  }
+
+  const list = DATA.students.filter(s=>s.classId===classId).sort((a,b)=>a.nama.localeCompare(b.nama,'id'));
+  if(!list.length){ emptyMsg.hidden=false; emptyMsg.textContent='Belum ada siswa di kelas ini. Tambahkan siswa di menu "Kelas & Siswa".'; return; }
+  emptyMsg.hidden = true;
+
+  nilaiRecord = await dbFetchNilai(classId, semester);
+  list.forEach(s=>{ if(!nilaiRecord[s.id]) nilaiRecord[s.id] = {}; });
+
+  const headRow = document.createElement('tr');
+  headRow.innerHTML = '<th style="width:30px">No</th><th style="min-width:130px">Nama Siswa</th>' +
+    nilaiMateriNames.map((n,i)=>`<th style="width:58px" title="${escapeHtml(n)}">M${i+1}</th>`).join('') +
+    '<th style="width:62px">Rata2 Materi</th><th style="width:66px">Pengetahuan</th><th style="width:66px">Keterampilan</th>' +
+    '<th style="width:58px">Praktik</th><th style="width:66px">Nilai Harian</th><th style="width:50px">PTS</th><th style="width:60px">PAS/SAS</th>' +
+    '<th style="width:60px">Nilai Akhir</th><th style="width:56px">Predikat</th><th style="width:100px">Keterangan</th>';
+  thead.appendChild(headRow);
+
+  list.forEach((s,i)=>{
+    const rec = nilaiRecord[s.id];
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${i+1}</td><td style="text-align:left">${escapeHtml(s.nama)}</td>`;
+    for(let m=1;m<=6;m++){
+      const td = document.createElement('td');
+      const inp = document.createElement('input');
+      inp.type='number'; inp.min='0'; inp.max='100'; inp.className='nilai-input';
+      inp.value = (rec['materi'+m]!==undefined && rec['materi'+m]!==null) ? rec['materi'+m] : '';
+      inp.dataset.siswa = s.id; inp.dataset.field = 'materi'+m;
+      td.appendChild(inp); tr.appendChild(td);
+    }
+    ['pengetahuan','keterampilan','praktik','nilaiHarian','pts','pas'].forEach(field=>{
+      const td = document.createElement('td');
+      const inp = document.createElement('input');
+      inp.type='number'; inp.min='0'; inp.max='100'; inp.className='nilai-input';
+      inp.value = (rec[field]!==undefined && rec[field]!==null) ? rec[field] : '';
+      inp.dataset.siswa = s.id; inp.dataset.field = field;
+      td.appendChild(inp); tr.appendChild(td);
+    });
+    const tdRata = document.createElement('td'); tdRata.className='nilai-rata'; tdRata.style.textAlign='center';
+    const tdAkhir = document.createElement('td'); tdAkhir.className='nilai-akhir'; tdAkhir.style.textAlign='center'; tdAkhir.style.fontWeight='800';
+    const tdPredikat = document.createElement('td'); tdPredikat.className='nilai-predikat'; tdPredikat.style.textAlign='center';
+    const tdKet = document.createElement('td'); tdKet.className='nilai-ket'; tdKet.style.textAlign='center';
+    // urutan kolom: 6 materi input sudah masuk, sisipkan Rata2 SEBELUM 6 kolom asesmen yang barusan ditambahkan
+    tr.insertBefore(tdRata, tr.children[8]); // setelah No,Nama,M1-6 (indeks 2..7) -> posisi 8
+    tr.appendChild(tdAkhir); tr.appendChild(tdPredikat); tr.appendChild(tdKet);
+    tbody.appendChild(tr);
+    updateNilaiRowCompute(tr, rec);
+  });
+
+  tbody.querySelectorAll('.nilai-input').forEach(inp=>{
+    inp.addEventListener('input', ()=>{
+      const tr = inp.closest('tr');
+      const siswaId = inp.dataset.siswa, field = inp.dataset.field;
+      let v = inp.value;
+      if(v!==''){
+        let num = Number(v);
+        if(isNaN(num)) num = '';
+        else { if(num<0) num=0; if(num>100) num=100; }
+        v = num;
+      }
+      if(!nilaiRecord[siswaId]) nilaiRecord[siswaId] = {};
+      nilaiRecord[siswaId][field] = v;
+      updateNilaiRowCompute(tr, nilaiRecord[siswaId]);
+      updateNilaiStats();
+    });
+  });
+
+  updateNilaiStats();
+}
+
+document.getElementById('nilaiKelas').addEventListener('change', renderNilai);
+document.getElementById('nilaiSemester').addEventListener('change', renderNilai);
+
+document.getElementById('materiToggleRow').addEventListener('click', ()=>{
+  const box = document.getElementById('materiBox');
+  box.hidden = !box.hidden;
+  document.getElementById('materiChevron').textContent = box.hidden ? 'Buka ▾' : 'Tutup ▴';
+});
+
+document.getElementById('btnSimpanMateri').addEventListener('click', async ()=>{
+  const classId = document.getElementById('nilaiKelas').value;
+  const semester = Number(document.getElementById('nilaiSemester').value || 1);
+  if(!classId){ toast('Pilih kelas terlebih dahulu'); return; }
+  const names = [];
+  for(let i=0;i<6;i++){
+    const v = document.getElementById('materiInput'+i).value.trim();
+    names.push(v || `Materi ${i+1}`);
+  }
+  const ok = await dbSaveNilaiMateri(classId, semester, names);
+  if(!ok) return;
+  toast('Materi disimpan');
+  await renderNilai();
+});
+
+document.getElementById('btnResetMateri').addEventListener('click', ()=>{
+  const classId = document.getElementById('nilaiKelas').value;
+  const semester = Number(document.getElementById('nilaiSemester').value || 1);
+  const kelas = DATA.classes.find(k=>k.id===classId);
+  const defaults = getDefaultMateri(kelas ? kelas.nama : '', semester);
+  for(let i=0;i<6;i++) document.getElementById('materiInput'+i).value = defaults[i];
+  toast('Materi dikembalikan ke bawaan — klik "Simpan Materi" untuk menyimpan');
+});
+
+document.getElementById('btnSimpanNilai').addEventListener('click', async ()=>{
+  const classId = document.getElementById('nilaiKelas').value;
+  const semester = Number(document.getElementById('nilaiSemester').value || 1);
+  if(!classId){ toast('Pilih kelas terlebih dahulu'); return; }
+  const ok = await dbSaveNilaiBatch(classId, semester, nilaiRecord);
+  if(!ok) return;
+  toast('Nilai tersimpan');
+});
+
+/* ---- Unduh Excel/CSV ---- */
+document.getElementById('btnUnduhNilaiCsv').addEventListener('click', async ()=>{
+  const classId = document.getElementById('nilaiKelas').value;
+  const semester = Number(document.getElementById('nilaiSemester').value || 1);
+  if(!classId){ toast('Pilih kelas terlebih dahulu'); return; }
+  await renderNilai();
+  const kelas = DATA.classes.find(k=>k.id===classId);
+  const list = DATA.students.filter(s=>s.classId===classId).sort((a,b)=>a.nama.localeCompare(b.nama,'id'));
+  if(!list.length){ toast('Belum ada siswa di kelas ini'); return; }
+  const s = DATA.settings;
+  const rows = [];
+  rows.push([s.namaSekolah]);
+  rows.push([`Daftar Nilai PJOK - ${kelas.nama} - Semester ${semester}`]);
+  rows.push([]);
+  rows.push(['No','Nama Siswa', ...nilaiMateriNames, 'Rata2 Materi','Pengetahuan','Keterampilan','Praktik','Nilai Harian','PTS','PAS/SAS','Nilai Akhir','Predikat','Keterangan']);
+  list.forEach((st,i)=>{
+    const r = nilaiRecord[st.id] || {};
+    rows.push([
+      i+1, st.nama, r.materi1??'', r.materi2??'', r.materi3??'', r.materi4??'', r.materi5??'', r.materi6??'',
+      (r._rata===''||r._rata===undefined) ? '' : Number(r._rata).toFixed(1),
+      r.pengetahuan??'', r.keterampilan??'', r.praktik??'', r.nilaiHarian??'', r.pts??'', r.pas??'',
+      r._akhir??'', predikatFromNilai(r._akhir), keteranganFromNilai(r._akhir)
+    ]);
+  });
+  const csv = rows.map(r=>r.map(csvEscape).join(',')).join('\r\n');
+  const blob = new Blob(['\uFEFF'+csv], {type:'text/csv;charset=utf-8;'});
+  const fname = `Daftar_Nilai_${kelas.nama.replace(/\s+/g,'_')}_Semester${semester}.csv`;
+  downloadBlob(blob, fname);
+  toast('Daftar nilai Excel/CSV berhasil diunduh');
+});
+
+/* ---- PDF Daftar Nilai (kop surat resmi, sama seperti PDF Rekap Presensi & Jurnal) ---- */
+async function buildNilaiPdfDoc(){
+  const classId = document.getElementById('nilaiKelas').value;
+  const semester = Number(document.getElementById('nilaiSemester').value || 1);
+  if(!classId){ toast('Pilih kelas terlebih dahulu untuk mencetak daftar nilai'); return null; }
+  await renderNilai();
+  const kelas = DATA.classes.find(k=>k.id===classId);
+  const list = DATA.students.filter(s=>s.classId===classId).sort((a,b)=>a.nama.localeCompare(b.nama,'id'));
+  if(!list.length){ toast('Belum ada siswa di kelas ini'); return null; }
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({orientation:'landscape', unit:'pt', format:'a4'});
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const s = DATA.settings;
+
+  await drawKopSurat(doc, pageWidth, s);
+  const cx = pageWidth/2;
+  doc.setFont('helvetica','bold'); doc.setFontSize(12);
+  doc.text(`DAFTAR NILAI PJOK KURIKULUM MERDEKA — SEMESTER ${semester}`, cx, 116, {align:'center'});
+  doc.setFontSize(13);
+  doc.text(kelas.nama.toUpperCase(), cx, 131, {align:'center'});
+
+  const head = [['No','Nama Siswa', ...nilaiMateriNames.map((n,i)=>`M${i+1}`),
+    'Rata2','Peng.','Ket.','Prak.','N.Harian','PTS','PAS','Nilai\nAkhir','Predikat','Keterangan']];
+  const body = list.map((st,i)=>{
+    const r = nilaiRecord[st.id] || {};
+    return [
+      i+1, st.nama, r.materi1??'-', r.materi2??'-', r.materi3??'-', r.materi4??'-', r.materi5??'-', r.materi6??'-',
+      (r._rata===''||r._rata===undefined) ? '-' : Number(r._rata).toFixed(1),
+      r.pengetahuan??'-', r.keterampilan??'-', r.praktik??'-', r.nilaiHarian??'-', r.pts??'-', r.pas??'-',
+      (r._akhir===''||r._akhir===undefined) ? '-' : r._akhir,
+      predikatFromNilai(r._akhir) || '-', keteranganFromNilai(r._akhir) || '-'
+    ];
+  });
+
+  doc.autoTable({
+    startY: 145,
+    head, body,
+    styles:{fontSize:7, halign:'center', cellPadding:2.5, lineColor:[210,215,225], lineWidth:0.5},
+    headStyles:{fillColor:[13,44,102], textColor:255, fontStyle:'bold'},
+    columnStyles:{0:{cellWidth:18}, 1:{cellWidth:88, halign:'left'}},
+    margin:{left:40, right:40}
+  });
+
+  let finalY = doc.lastAutoTable.finalY + 20;
+  const pageH = doc.internal.pageSize.getHeight();
+  if(finalY > pageH - 120){ doc.addPage('a4','landscape'); finalY = 50; }
+
+  const vals = list.map(st=> (nilaiRecord[st.id]||{})._akhir).filter(v=>v!==''&&v!==undefined&&v!==null);
+  const rataKelas = vals.length ? Math.round(vals.reduce((a,b)=>a+b,0)/vals.length) : 0;
+  const tuntas = vals.filter(v=>v>=70).length;
+
+  doc.setFont('helvetica','bold'); doc.setFontSize(10);
+  doc.text('Ringkasan:', 40, finalY);
+  doc.setFont('helvetica','normal');
+  doc.text(`Jumlah Siswa: ${list.length}   |   Rata-rata Kelas: ${rataKelas}   |   Tuntas: ${tuntas}   |   Belum Tuntas: ${vals.length-tuntas}   (KKM praktis: 70)`, 40, finalY+15);
+
+  let noteY = finalY + 34;
+  doc.setFont('helvetica','italic'); doc.setFontSize(7.5);
+  const materiLegend = nilaiMateriNames.map((n,i)=>`M${i+1} = ${n}`).join('   |   ');
+  const splitLegend = doc.splitTextToSize(materiLegend, pageWidth-260);
+  doc.text(splitLegend, 40, noteY);
+  noteY += splitLegend.length*9;
+
+  const tglCetak = formatIndoDate(new Date());
+  const signX = pageWidth - 220;
+  let signY = Math.max(finalY+50, noteY+18);
+  if(signY > pageH - 90){ doc.addPage('a4','landscape'); signY = 60; }
+  doc.setFont('helvetica','normal'); doc.setFontSize(10);
+  doc.text(`${s.tempat || 'Tanjung'}, ${tglCetak}`, signX, signY, {align:'left'});
+  doc.text(`${s.mapel || 'Guru Penjasorkes'}`, signX, signY+15, {align:'left'});
+  doc.setFont('helvetica','bold');
+  doc.text(`${s.namaGuru || ''}`, signX, signY+70, {align:'left'});
+  doc.setFont('helvetica','normal');
+  doc.text(`NIP. ${s.nip || ''}`, signX, signY+85, {align:'left'});
+
+  const fname = `Daftar_Nilai_${kelas.nama.replace(/\s+/g,'_')}_Semester${semester}.pdf`;
+  return { doc, fname };
+}
+
+document.getElementById('btnUnduhNilaiPdf').addEventListener('click', async ()=>{
+  const built = await buildNilaiPdfDoc();
+  if(!built) return;
+  built.doc.save(built.fname);
+  toast('PDF daftar nilai berhasil diunduh');
+});
+
+document.getElementById('btnKirimNilaiPdfDrive').addEventListener('click', async ()=>{
+  try{
+    await ensureDriveConnected();
+    toast('Membuat PDF daftar nilai...');
+    const built = await buildNilaiPdfDoc();
+    if(!built) return;
+    toast('Mengunggah PDF ke Google Drive...');
+    const dataUri = built.doc.output('datauristring');
+    const base64 = dataUri.split(',')[1];
+    const result = await uploadToDrive(built.fname, 'application/pdf', base64, true);
+    if(result) toast('PDF daftar nilai berhasil diunggah ke Google Drive');
+  }catch(err){
+    if(err && err.message !== 'no client id' && err.message !== 'google sdk not ready') toast('Gagal mengunggah: ' + err.message);
+  }
 });
 
 /* ============================ KOP SURAT (PREVIEW) ============================ */
@@ -1250,10 +1656,10 @@ let gdriveToken = null;
 let gdriveTokenClient = null;
 
 function setGdriveStatus(text, connected){
-  ['gdriveStatus','gdriveStatusRekap'].forEach(id=>{
+  ['gdriveStatus','gdriveStatusRekap','gdriveStatusNilai'].forEach(id=>{
     const el = document.getElementById(id);
     if(!el) return;
-    el.textContent = id === 'gdriveStatusRekap' ? ('Google Drive: ' + text) : text;
+    el.textContent = (id === 'gdriveStatusRekap' || id === 'gdriveStatusNilai') ? ('Google Drive: ' + text) : text;
     el.classList.toggle('connected', !!connected);
   });
 }

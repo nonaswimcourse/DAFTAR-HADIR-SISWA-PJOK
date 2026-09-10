@@ -50,6 +50,7 @@
   <button class="tab active" data-page="kelas">🏫 Kelas &amp; Siswa</button>
   <button class="tab" data-page="presensi">✅ Presensi Harian</button>
   <button class="tab" data-page="jurnal">📔 Jurnal Harian</button>
+  <button class="tab" data-page="nilai">📝 Daftar Nilai</button>
   <button class="tab" data-page="rekap">📊 Rekap &amp; Cetak</button>
   <button class="tab" data-page="backup">☁️ Google Drive</button>
 </nav>
@@ -210,6 +211,78 @@
       <div class="row" style="margin-top:16px;justify-content:flex-end">
         <button class="btn primary" id="btnUnduhJurnalPdf" type="button">📄 Unduh Jurnal PDF</button>
       </div>
+    </div>
+  </section>
+
+  <!-- ===================== PAGE: DAFTAR NILAI (KURIKULUM MERDEKA) ===================== -->
+  <section id="nilai" class="page">
+    <div class="card">
+      <h2>Daftar Nilai PJOK — Kurikulum Merdeka</h2>
+      <p class="muted">Nilai dikelompokkan per <b>Semester 1</b> dan <b>Semester 2</b> mengikuti format Daftar Nilai PJOK Kurikulum Merdeka (Fase A/B/C). Rata-rata Materi, Nilai Akhir, Predikat &amp; Keterangan (Tuntas/Belum Tuntas, KKM 70) dihitung otomatis — sama seperti pada file Excel rekap nilai.</p>
+      <div class="grid2">
+        <div>
+          <label class="field-label">Kelas</label>
+          <select id="nilaiKelas"></select>
+        </div>
+        <div>
+          <label class="field-label">Semester</label>
+          <select id="nilaiSemester">
+            <option value="1">Semester 1 (Ganjil)</option>
+            <option value="2">Semester 2 (Genap)</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row between" id="materiToggleRow" style="cursor:pointer">
+        <h2>Materi Pembelajaran (Bisa Diedit)</h2>
+        <button type="button" class="btn secondary sm" id="materiChevron">Buka ▾</button>
+      </div>
+      <p class="muted">6 materi untuk semester yang dipilih di atas — sudah terisi otomatis sesuai Capaian Pembelajaran (CP) PJOK per fase &amp; kelas, dan bisa diubah bebas sesuai kebutuhan sekolah.</p>
+      <div id="materiBox" class="settings-box" hidden>
+        <div class="grid2" id="materiInputsWrap">
+          <div><label class="field-label">Materi 1</label><input id="materiInput0" placeholder="Materi 1"></div>
+          <div><label class="field-label">Materi 2</label><input id="materiInput1" placeholder="Materi 2"></div>
+          <div><label class="field-label">Materi 3</label><input id="materiInput2" placeholder="Materi 3"></div>
+          <div><label class="field-label">Materi 4</label><input id="materiInput3" placeholder="Materi 4"></div>
+          <div><label class="field-label">Materi 5</label><input id="materiInput4" placeholder="Materi 5"></div>
+          <div><label class="field-label">Materi 6</label><input id="materiInput5" placeholder="Materi 6"></div>
+        </div>
+        <div class="row" style="margin-top:10px;justify-content:flex-end;gap:8px">
+          <button class="btn secondary sm" id="btnResetMateri" type="button">↺ Kembalikan ke Bawaan</button>
+          <button class="btn primary sm" id="btnSimpanMateri" type="button">💾 Simpan Materi</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Input Nilai Siswa</h2>
+      <p class="muted">Ketuk sel nilai (0–100) untuk mengisi. M1–M6 mengikuti nama materi di atas. Nilai Akhir = rata-rata dari (Rata2 Materi, Pengetahuan, Keterampilan, Praktik, Nilai Harian, PTS, PAS/SAS) yang terisi.</p>
+
+      <div class="stats" id="nilaiStats"></div>
+
+      <div class="table-wrap">
+        <table>
+          <thead id="nilaiTableHead"></thead>
+          <tbody id="nilaiTableBody"></tbody>
+        </table>
+      </div>
+      <p class="empty" id="nilaiEmptyMsg" hidden>Pilih kelas terlebih dahulu.</p>
+
+      <div class="row" style="margin-top:14px;justify-content:flex-end">
+        <button class="btn primary" id="btnSimpanNilai" type="button">💾 Simpan Nilai</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Cetak &amp; Unduh</h2>
+      <div class="row" style="justify-content:flex-end;gap:8px;flex-wrap:wrap">
+        <button class="btn secondary" id="btnUnduhNilaiCsv" type="button">📑 Unduh Nilai Excel/CSV</button>
+        <button class="btn primary" id="btnUnduhNilaiPdf" type="button">📄 Unduh Daftar Nilai PDF</button>
+        <button class="btn primary" id="btnKirimNilaiPdfDrive" type="button">☁️ Kirim PDF ke Google Drive</button>
+      </div>
+      <p class="small-muted" style="text-align:right;margin-top:6px" id="gdriveStatusNilai">Google Drive: belum terhubung</p>
     </div>
   </section>
 
